@@ -159,7 +159,9 @@ async def chat(req: Request):
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-12:]
     async def call(url, key, model, max_tokens):
-        async with httpx.AsyncClient(timeout=45) as client:
+        # NVIDIA free tier can be slow (~60-90s); give it room, keep others snappy
+        tmo = 100 if "nvidia" in url else 30
+        async with httpx.AsyncClient(timeout=tmo) as client:
             r = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
