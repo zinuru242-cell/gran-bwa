@@ -34,9 +34,14 @@ def getkey(name):
 OPENROUTER_KEY = getkey("OPENROUTER_API_KEY")
 NVIDIA_KEY = getkey("NVIDIA_API_KEY")
 
-# Brains tried in order. NVIDIA is free + reliable → primary. OpenRouter free models → backup.
+# Brains tried in order. DeepSeek (OpenRouter) is fast + very cheap → primary.
+# NVIDIA free models → reliable free backup if credit runs out.
 # Each entry: (provider, base_url, api_key, model)
 BRAINS = []
+if OPENROUTER_KEY:
+    BRAINS += [
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat"),
+    ]
 if NVIDIA_KEY:
     BRAINS += [
         ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "meta/llama-3.1-70b-instruct"),
@@ -45,7 +50,6 @@ if NVIDIA_KEY:
 if OPENROUTER_KEY:
     BRAINS += [
         ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "meta-llama/llama-3.3-70b-instruct:free"),
-        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat"),
     ]
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
@@ -158,7 +162,7 @@ async def chat(req: Request):
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-12:]
     async def call(url, key, model, max_tokens):
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(timeout=45) as client:
             r = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
