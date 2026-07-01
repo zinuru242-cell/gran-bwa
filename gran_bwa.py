@@ -40,13 +40,13 @@ NVIDIA_KEY = getkey("NVIDIA_API_KEY")
 BRAINS = []
 if NVIDIA_KEY:
     BRAINS += [
-        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "meta/llama-3.1-70b-instruct", 500),
-        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "mistralai/mixtral-8x7b-instruct-v0.1", 500),
+        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "meta/llama-3.1-70b-instruct", 350),
+        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "mistralai/mixtral-8x7b-instruct-v0.1", 350),
     ]
 if OPENROUTER_KEY:
     BRAINS += [
-        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "meta-llama/llama-3.3-70b-instruct:free", 500),
-        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat", 250),
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "meta-llama/llama-3.3-70b-instruct:free", 350),
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat", 220),
     ]
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
@@ -57,6 +57,7 @@ YOUR PURPOSE: Help ordinary people learn which plants have traditionally been us
 HOW YOU SPEAK:
 - Warm, reverent, grounded. Address the person as "child" or "little one" gently, like a wise grandfather of the forest.
 - Short, clear answers a worried person can understand. No lectures.
+- BE CONCISE. Keep answers brief — a few short sentences or a short list. People wait on a slow phone connection, so do not ramble. Give the plant, its use, its warning, its picture-tag, and stop.
 - You honor traditional and ancestral knowledge AND you respect modern medicine — they are two hands of the same healing.
 
 SACRED SAFETY LAWS — you MUST obey these in EVERY answer about a plant or ailment:
@@ -110,6 +111,24 @@ def icon(size: str):
 def health():
     return {"status": "ok", "brains": len(BRAINS)}
 
+@app.get("/img")
+async def img_proxy(u: str = ""):
+    """Proxy + shrink a Wikipedia image through our own server so it loads fast
+    and reliably on slow/restricted connections (the phone only talks to us)."""
+    if not u or "wikimedia.org" not in u:
+        return Response(status_code=400)
+    # force a small thumbnail version of any commons image (fast on slow networks)
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+            r = await client.get(u, headers={"User-Agent": "GranBwa-ForestHealer/1.0"})
+        if r.status_code == 200:
+            return Response(content=r.content,
+                            media_type=r.headers.get("content-type", "image/jpeg"),
+                            headers={"Cache-Control": "public, max-age=86400"})
+    except Exception:
+        pass
+    return Response(status_code=502)
+
 @app.get("/greeting")
 def greeting():
     return {"text": GREETING}
@@ -135,11 +154,18 @@ async def plant_image(name: str = "", common: str = ""):
                 d = r.json()
                 thumb = (d.get("thumbnail") or {}).get("source", "")
                 orig = (d.get("originalimage") or {}).get("source", "")
-                if thumb or orig:
+                pic = thumb or orig
+                if pic:
+                    # upscale the thumbnail request to a reasonable 500px for clarity but small size
+                    if "/thumb/" in pic:
+                        pic = re.sub(r'/(\d+)px-', '/500px-', pic)
+                    # route through our own proxy so the phone only talks to us (fast + reliable)
+                    from urllib.parse import quote
+                    proxied = "/img?u=" + quote(pic, safe="")
                     return {
                         "found": True,
-                        "image": orig or thumb,
-                        "thumb": thumb or orig,
+                        "image": proxied,
+                        "thumb": proxied,
                         "title": d.get("title", name),
                         "extract": d.get("extract", ""),
                         "url": (d.get("content_urls", {}).get("desktop", {}) or {}).get("page", ""),
