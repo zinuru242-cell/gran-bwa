@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Gran Bwa · The Forest Healer</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#3a5a34">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gran Bwa">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<style>
+  :root{
+    --gold:#d4af37; --gb:#f5d76e; --gd:#8a6d1f;
+    --green:#3a5a34; --green-deep:#1a2a17; --leaf:#7ea86a;
+    --bg:#080a06; --panel:#12160e; --ink:#e6e8d8; --dim:#8a9a72;
+    --line:rgba(126,168,106,.25);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:radial-gradient(ellipse at 50% -10%, #16220f 0%, var(--bg) 55%, #030402 100%);
+    color:var(--ink); font-family:"Georgia",serif; display:flex; flex-direction:column;
+    height:100dvh; overflow:hidden;
+  }
+  header{text-align:center; padding:16px 14px 10px; border-bottom:1px solid var(--line); background:rgba(10,14,7,.6)}
+  .sigil{font-size:15px;letter-spacing:10px;color:var(--gold);margin-bottom:4px}
+  h1{
+    font-size:26px; letter-spacing:5px; font-weight:400;
+    background:linear-gradient(180deg,var(--gb),var(--gold),var(--gd));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .role{color:var(--leaf);font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-top:2px;font-style:italic}
+  .safety{
+    background:linear-gradient(90deg,rgba(58,90,52,.25),rgba(138,109,31,.15));
+    border-bottom:1px solid var(--line); color:var(--dim); font-size:11px; line-height:1.5;
+    padding:8px 16px; text-align:center;
+  }
+  .safety b{color:var(--gb)}
+  #chat{flex:1; overflow-y:auto; padding:18px 14px 8px; display:flex; flex-direction:column; gap:14px}
+  .msg{max-width:88%; padding:13px 16px; border-radius:14px; font-size:15px; line-height:1.6; word-wrap:break-word; overflow-wrap:break-word}
+  .me{white-space:pre-wrap}
+  .bwa{align-self:flex-start; background:linear-gradient(160deg,rgba(26,42,23,.95),rgba(18,22,14,.98)); border:1px solid var(--line); border-bottom-left-radius:4px}
+  .bwa .who{color:var(--leaf);font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;display:block}
+  .bwa .li{display:block;padding:3px 0 3px 4px;line-height:1.55}
+  .bwa b{color:var(--gb)} .bwa i{color:var(--leaf);font-style:italic}
+  .me{align-self:flex-end; background:linear-gradient(160deg,rgba(138,109,31,.35),rgba(90,70,20,.4)); border:1px solid rgba(212,175,55,.3); border-bottom-right-radius:4px; color:var(--ink)}
+  .typing{align-self:flex-start;color:var(--leaf);font-style:italic;font-size:14px;padding:6px 16px;opacity:.8}
+  .plantcard{align-self:flex-start;max-width:88%;background:linear-gradient(160deg,rgba(26,42,23,.95),rgba(14,20,10,.98));border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:-4px}
+  .plantcard img{width:100%;max-height:300px;object-fit:contain;background:#0a0f07;display:block;border-bottom:1px solid var(--line)}
+  .plantcard .pname{color:var(--gb);font-size:16px;letter-spacing:1px;padding:10px 14px 4px}
+  .plantcard .pname i{color:var(--leaf);font-size:13px}
+  .plantcard .pdesc{color:var(--ink);font-size:13px;line-height:1.5;padding:2px 14px 8px}
+  .plantcard .pwarn{color:var(--gb);font-size:11.5px;line-height:1.5;padding:8px 14px;background:rgba(138,109,31,.18);border-top:1px solid var(--line)}
+  .plantcard .plink{display:inline-block;color:var(--leaf);font-size:12px;padding:8px 14px;text-decoration:none}
+  .plantcard .ploading,.plantcard .pnone{color:var(--leaf);font-size:13px;font-style:italic;padding:14px}
+  .plantcard .pnone{color:var(--dim)}
+  .leaf{display:inline-block;animation:sway 2s ease-in-out infinite}
+  @keyframes sway{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(8deg)}}
+  footer{padding:12px 14px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:rgba(10,14,7,.7)}
+  .inrow{display:flex;gap:9px;align-items:flex-end}
+  textarea{
+    flex:1; background:var(--panel); border:1px solid var(--line); color:var(--ink);
+    font-family:"Georgia",serif; font-size:16px; padding:13px 15px; border-radius:12px; outline:none;
+    resize:none; max-height:120px; line-height:1.4;
+  }
+  textarea:focus{border-color:var(--leaf);box-shadow:0 0 16px rgba(126,168,106,.2)}
+  button{
+    background:linear-gradient(180deg,var(--leaf),var(--green)); color:#0a1207; border:none;
+    font-family:"Georgia",serif; font-weight:bold; font-size:20px; width:52px; height:52px;
+    border-radius:50%; cursor:pointer; transition:.15s; flex-shrink:0;
+  }
+  button:hover{filter:brightness(1.15)} button:disabled{opacity:.4;cursor:not-allowed}
+  .starters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .chip{background:rgba(26,42,23,.6);border:1px solid var(--line);color:var(--leaf);font-size:12px;padding:7px 12px;border-radius:16px;cursor:pointer;transition:.15s}
+  .chip:hover{background:var(--green);color:var(--gb)}
+</style>
+</head>
+<body>
+  <header>
+    <div class="sigil">🜁 &nbsp; 🌿 &nbsp; 🜃</div>
+    <h1>GRAN BWA</h1>
+    <div class="role">Grand Bois · Keeper of the Forest</div>
+    <button id="installBtn" onclick="installApp()" style="display:none;margin-top:8px;background:linear-gradient(180deg,var(--leaf),var(--green));color:#0a1207;border:none;font-family:Georgia,serif;font-size:12px;letter-spacing:1px;padding:6px 16px;border-radius:16px;cursor:pointer">📲 Install Gran Bwa</button>
+  </header>
+  <div class="safety">
+    🌿 A guide to the <b>traditional</b> healing plants — <b>not</b> a doctor. For serious illness, a sick child, blood, or poisoning: <b>see a real healer or doctor now.</b> Always confirm any plant with a living elder before use.
+  </div>
+
+  <div id="chat"></div>
+
+  <footer>
+    <div class="starters" id="starters">
+      <div class="chip" onclick="starter(this)">What plants help a fever?</div>
+      <div class="chip" onclick="starter(this)">Tell me about bitter leaf</div>
+      <div class="chip" onclick="starter(this)">A plant for wounds?</div>
+      <div class="chip" onclick="starter(this)">What is dangerous to eat?</div>
+    </div>
+    <div class="inrow">
+      <textarea id="input" rows="1" placeholder="Ask Gran Bwa about a plant or ailment…" autocomplete="off"></textarea>
+      <button id="send" onclick="send()">➤</button>
+    </div>
+  </footer>
+
+<script>
+const chat=document.getElementById('chat');
+const input=document.getElementById('input');
+const sendBtn=document.getElementById('send');
+let history=[];
+
+function addMsg(text, who){
+  const d=document.createElement('div');
+  d.className='msg '+(who==='bwa'?'bwa':'me');
+  if(who==='bwa'){
+    // extract plant tags, strip them from displayed text
+    const plants=[];
+    const clean=text.replace(/\[PLANT:\s*([^|\]]+?)\s*(?:\|\s*([^\]]+?))?\s*\]/gi,(m,sci,com)=>{
+      plants.push({sci:sci.trim(), com:(com||'').trim()}); return '';
+    }).trim();
+    d.innerHTML='<span class="who">🌿 Gran Bwa</span>'+mdFormat(clean);
+    chat.appendChild(d);
+    // fetch + show a reference photo for each tagged plant
+    plants.forEach(p=>showPlant(p.sci, p.com, d));
+  } else {
+    d.textContent=text;
+    chat.appendChild(d);
+  }
+  chat.scrollTop=chat.scrollHeight;
+  return d;
+}
+
+// light, safe markdown: escape first, then apply bold/italic/bullets/breaks
+function mdFormat(s){
+  let t=escapeHtml(s);
+  t=t.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');       // **bold**
+  t=t.replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>'); // *italic*
+  t=t.replace(/^[\s]*[-•]\s+(.*)$/gm,'<span class="li">🌿 $1</span>'); // - bullets
+  t=t.replace(/\n/g,'<br>');
+  return t;
+}
+
+async function showPlant(sci, com, afterEl){
+  const card=document.createElement('div');
+  card.className='plantcard';
+  card.innerHTML='<div class="ploading">🌿 finding a picture of '+escapeHtml(com||sci)+'…</div>';
+  afterEl.after(card);
+  chat.scrollTop=chat.scrollHeight;
+  try{
+    const r=await fetch('/plant-image?name='+encodeURIComponent(sci)+'&common='+encodeURIComponent(com));
+    const d=await r.json();
+    if(d.found){
+      card.innerHTML=
+        '<img src="'+d.image+'" alt="'+escapeHtml(d.title)+'" loading="lazy">'+
+        '<div class="pname">'+escapeHtml(d.title)+(com?' · <i>'+escapeHtml(com)+'</i>':'')+'</div>'+
+        (d.extract?'<div class="pdesc">'+escapeHtml(d.extract.slice(0,240))+(d.extract.length>240?'…':'')+'</div>':'')+
+        '<div class="pwarn">🌿 Reference only — real plants vary and deadly lookalikes exist. Always confirm with a living elder or herbalist before use.</div>'+
+        (d.url?'<a class="plink" href="'+d.url+'" target="_blank" rel="noopener">see more ↗</a>':'');
+    }else{
+      card.innerHTML='<div class="pnone">🌿 I could not find a clear picture of <b>'+escapeHtml(com||sci)+'</b>. Ask a living elder to show you this leaf in the flesh — that is always safest.</div>';
+    }
+  }catch(e){
+    card.innerHTML='<div class="pnone">🌿 The picture would not come, child. Seek this leaf from an elder\'s hands.</div>';
+  }
+  chat.scrollTop=chat.scrollHeight;
+}
+function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function starter(el){ input.value=el.textContent; send(); }
+
+async function send(){
+  const text=input.value.trim();
+  if(!text) return;
+  document.getElementById('starters').style.display='none';
+  addMsg(text,'me');
+  history.push({role:'user',content:text});
+  input.value=''; input.style.height='auto';
+  sendBtn.disabled=true;
+
+  const typing=document.createElement('div');
+  typing.className='typing';
+  typing.innerHTML='<span class="leaf">🌿</span> Gran Bwa listens to the forest…';
+  chat.appendChild(typing); chat.scrollTop=chat.scrollHeight;
+
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:history})});
+    const data=await r.json();
+    typing.remove();
+    const reply=data.text||"The forest is quiet, child. Ask again.";
+    addMsg(reply,'bwa');
+    history.push({role:'assistant',content:reply});
+  }catch(e){
+    typing.remove();
+    addMsg("The wind carried my voice away. Ask me again, little one.",'bwa');
+  }
+  sendBtn.disabled=false; input.focus();
+}
+
+input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';});
+input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+
+// opening greeting
+fetch('/greeting').then(r=>r.json()).then(d=>{ addMsg(d.text,'bwa'); history.push({role:'assistant',content:d.text}); })
+  .catch(()=>addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa'));
+
+// ---------- PWA: service worker + install prompt ----------
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+}
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault(); deferredPrompt=e;
+  const b=document.getElementById('installBtn');
+  if(b) b.style.display='inline-block';
+});
+function installApp(){
+  if(!deferredPrompt){
+    alert("To install: on iPhone tap the Share button then 'Add to Home Screen'. On Android, open the menu (⋮) then 'Install app'.");
+    return;
+  }
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.finally(()=>{ deferredPrompt=null; const b=document.getElementById('installBtn'); if(b) b.style.display='none'; });
+}
+</script>
+</body>
+</html>
