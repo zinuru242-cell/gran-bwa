@@ -34,22 +34,19 @@ def getkey(name):
 OPENROUTER_KEY = getkey("OPENROUTER_API_KEY")
 NVIDIA_KEY = getkey("NVIDIA_API_KEY")
 
-# Brains tried in order. DeepSeek (OpenRouter) is fast + very cheap → primary.
-# NVIDIA free models → reliable free backup if credit runs out.
-# Each entry: (provider, base_url, api_key, model)
+# Brains tried in order. NVIDIA is genuinely FREE (no credit ever) → primary, for the community.
+# DeepSeek (OpenRouter) is fast but needs credit → used first ONLY while credit lasts, small size.
+# Each entry: (provider, base_url, api_key, model, max_tokens)
 BRAINS = []
-if OPENROUTER_KEY:
-    BRAINS += [
-        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat"),
-    ]
 if NVIDIA_KEY:
     BRAINS += [
-        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "meta/llama-3.1-70b-instruct"),
-        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "mistralai/mixtral-8x7b-instruct-v0.1"),
+        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "meta/llama-3.1-70b-instruct", 500),
+        ("nvidia", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_KEY, "mistralai/mixtral-8x7b-instruct-v0.1", 500),
     ]
 if OPENROUTER_KEY:
     BRAINS += [
-        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "meta-llama/llama-3.3-70b-instruct:free"),
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "meta-llama/llama-3.3-70b-instruct:free", 500),
+        ("openrouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_KEY, "deepseek/deepseek-chat", 250),
     ]
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
@@ -172,9 +169,9 @@ async def chat(req: Request):
 
     last_err = "unknown"
     try:
-        for provider, url, key, model in BRAINS:
+        for provider, url, key, model, max_tokens in BRAINS:
             try:
-                data = await call(url, key, model, 700)
+                data = await call(url, key, model, max_tokens)
             except Exception as e:
                 last_err = f"{provider}:{type(e).__name__}"
                 continue
@@ -191,8 +188,8 @@ if __name__ == "__main__":
     print("=" * 55)
     print("  GRAN BWA — The Forest Healer")
     print("  Brains connected:", len(BRAINS))
-    for p, _, _, m in BRAINS:
-        print(f"    - {p}: {m}")
+    for b in BRAINS:
+        print(f"    - {b[0]}: {b[3]}")
     print(f"  Open: http://localhost:{port}")
     print("=" * 55)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
