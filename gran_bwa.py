@@ -113,21 +113,24 @@ def health():
 
 @app.get("/img")
 async def img_proxy(u: str = ""):
-    """Proxy + shrink a Wikipedia image through our own server so it loads fast
+    """Proxy a Wikipedia image through our own server so it loads fast
     and reliably on slow/restricted connections (the phone only talks to us)."""
     if not u or "wikimedia.org" not in u:
         return Response(status_code=400)
-    # force a small thumbnail version of any commons image (fast on slow networks)
     try:
         async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-            r = await client.get(u, headers={"User-Agent": "GranBwa-ForestHealer/1.0"})
+            r = await client.get(u, headers={
+                "User-Agent": "Mozilla/5.0 (GranBwa Forest Healer; community plant guide; +https://web-production-1da78.up.railway.app)",
+                "Accept": "image/avif,image/webp,image/jpeg,image/png,*/*",
+                "Referer": "https://en.wikipedia.org/",
+            })
         if r.status_code == 200:
             return Response(content=r.content,
                             media_type=r.headers.get("content-type", "image/jpeg"),
                             headers={"Cache-Control": "public, max-age=86400"})
-    except Exception:
-        pass
-    return Response(status_code=502)
+        return Response(content=f"upstream {r.status_code}".encode(), status_code=502)
+    except Exception as e:
+        return Response(content=f"proxy error: {type(e).__name__}".encode(), status_code=502)
 
 @app.get("/greeting")
 def greeting():
