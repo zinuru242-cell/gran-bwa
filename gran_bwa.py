@@ -34,8 +34,11 @@ def getkey(name):
 OPENROUTER_KEY = getkey("OPENROUTER_API_KEY")
 NVIDIA_KEY = getkey("NVIDIA_API_KEY")
 
-# Brains tried in order. NVIDIA is genuinely FREE (no credit ever) → primary, for the community.
-# DeepSeek (OpenRouter) is fast but needs credit → kept LAST, so it only spends when the free ones fail.
+# Brains tried in order. The first SIX are free and can never spend a cent, so the
+# forest cannot go quiet because a balance ran dry. DeepSeek sits LAST and is the
+# only paid brain — it is outage insurance, reached only if both NVIDIA and every
+# free OpenRouter model are down at once. At ~0.1c a question that is pennies a
+# year. If you ever add another paid model, put it after this one and say so here.
 # Model IDs verified against the live NVIDIA NIM and OpenRouter catalogs on 2026-08-02.
 # Each entry: (provider, base_url, api_key, model, max_tokens)
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -52,7 +55,9 @@ if OPENROUTER_KEY:
     BRAINS += [
         ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "nvidia/nemotron-3-super-120b-a12b:free", 400),
         ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "google/gemma-4-31b-it:free", 350),
-        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "deepseek/deepseek-chat", 220),
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "openai/gpt-oss-20b:free", 350),
+        # ↓ the only paid brain in the ladder — last resort, both providers down
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "deepseek/deepseek-chat", 300),
     ]
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
@@ -78,9 +83,10 @@ SACRED SAFETY LAWS — you MUST obey these in EVERY answer about a plant or ailm
 
 SHOWING THE LEAF — so the community can recognize the plant:
 9. DESCRIBE ITS BODY IN WORDS. Whenever you name a specific healing plant, paint it so a person could recognize it in the wild: the shape of the leaf (long, round, heart-shaped, jagged), its color and size, the stem, the flower or fruit, where it grows. A word-picture that a person with no book could still follow.
-10. YOU CAN SHOW REAL PICTURES. You are NOT "just a voice" — this app shows a real reference photo automatically whenever you place a plant tag. So NEVER say "I cannot show images" or "search for these tags yourself." Instead, to make a picture appear, place a tag on its OWN line in EXACTLY this format:
-   [PLANT: Scientific name | Common name]
-   Example: [PLANT: Vernonia amygdalina | Bitter leaf]
+10. YOU CAN SHOW REAL PICTURES, AND YOU MUST SPEAK OVER THEM. You are NOT "just a voice" — this app shows a real reference photo automatically whenever you place a plant tag. So NEVER say "I cannot show images" or "search for these tags yourself." Instead, to make a picture appear, place a tag on its OWN line in EXACTLY this format, with THREE parts divided by | :
+   [PLANT: Scientific name | Common name | your own word-picture of how to know this plant]
+   Example: [PLANT: Vernonia amygdalina | Bitter leaf | A tall shrub at the edge of the yard. Leaves long and narrow like a blade, deep green, finely toothed at the edge, and bitter on the tongue. Small cream-white flower heads.]
+   THE THIRD PART IS REQUIRED. It is printed directly beneath the photograph, so your words and the picture stand together — the person looks at the leaf and reads how to know it at the same moment. Write it as you would speak it to someone holding the plant: what to look at first, what the leaf feels like, what colour the underside is, what it smells like when crushed, and above all what it must NOT be confused with. Two or three sentences. Never leave this part empty, and never fill it with "see above" — say the thing itself.
    The moment you write that tag, the person SEES the photo. Use the true botanical (Latin) scientific name. When someone asks "show me the picture" or "what does it look like," simply place the tag for that plant again — the image will appear. Place one tag per plant you want to show.
 11. THE PICTURE IS A GUIDE, NOT A PROOF. Remind them gently that a reference photo is only a guide — real plants vary, and deadly lookalikes exist, so they must always confirm with a living elder or herbalist before using any plant.
 
@@ -141,8 +147,10 @@ async def health(probe: str = "", token: str = ""):
     With ?probe=1 it actually calls each brain, so a delisted model shows up as
     dead instead of silently sitting in the failover ladder looking healthy.
 
-    Probing spends real tokens on a paid brain, so it is locked behind
-    HEALTH_TOKEN — otherwise a stranger could drain the credit by refreshing."""
+    Nothing here spends money any more, but a probe still fires one call per
+    brain and the free tiers are rate limited (~40/min), so it stays locked
+    behind HEALTH_TOKEN — a stranger refreshing it could push the community's
+    real questions into the rate limit."""
     listed = [{"provider": p, "model": m} for p, _u, _k, m, _t in BRAINS]
     if probe != "1":
         return {"status": "ok", "brains": len(BRAINS), "configured": listed}
