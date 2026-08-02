@@ -76,6 +76,17 @@
   .starters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
   .chip{background:rgba(26,42,23,.6);border:1px solid var(--line);color:var(--leaf);font-size:12px;padding:7px 12px;border-radius:16px;cursor:pointer;transition:.15s}
   .chip:hover{background:var(--green);color:var(--gb)}
+  .hbtn{
+    margin:8px 4px 0; background:linear-gradient(180deg,var(--leaf),var(--green)); color:#0a1207;
+    border:none; font-family:Georgia,serif; font-size:12px; letter-spacing:1px; padding:6px 16px;
+    border-radius:16px; cursor:pointer; white-space:nowrap; width:auto; height:auto;
+  }
+  .retry{
+    display:block; margin-top:10px; background:rgba(212,175,55,.18); color:var(--gb);
+    border:1px solid rgba(212,175,55,.4); font-family:Georgia,serif; font-size:13px;
+    padding:8px 16px; border-radius:16px; cursor:pointer; width:auto; height:auto;
+  }
+  .retry:hover{background:rgba(212,175,55,.3)}
 </style>
 </head>
 <body>
@@ -83,7 +94,8 @@
     <div class="sigil">🜁 &nbsp; 🌿 &nbsp; 🜃</div>
     <h1>GRAN BWA</h1>
     <div class="role">Grand Bois · Keeper of the Forest</div>
-    <button id="installBtn" onclick="installApp()" style="display:none;margin-top:8px;background:linear-gradient(180deg,var(--leaf),var(--green));color:#0a1207;border:none;font-family:Georgia,serif;font-size:12px;letter-spacing:1px;padding:6px 16px;border-radius:16px;cursor:pointer;white-space:nowrap">📲 Install</button>
+    <button id="installBtn" class="hbtn" onclick="installApp()" style="display:none">📲 Install</button>
+    <button id="freshBtn" class="hbtn" onclick="clearHistory()" style="display:none">🌱 New talk</button>
   </header>
   <div class="safety">
     🌿 A guide to the <b>traditional</b> healing plants — <b>not</b> a doctor. For serious illness, a sick child, blood, or poisoning: <b>see a real healer or doctor now.</b> Always confirm any plant with a living elder before use.
@@ -151,13 +163,14 @@ async function showPlant(sci, com, afterEl){
     const r=await fetch('/plant-image?name='+encodeURIComponent(sci)+'&common='+encodeURIComponent(com));
     const d=await r.json();
     if(d.found){
+      const link=safeUrl(d.url);
       card.innerHTML=
-        '<img src="'+d.image+'" alt="'+escapeHtml(d.title)+'" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\'">'+
+        '<img src="'+escapeHtml(d.image)+'" alt="'+escapeHtml(d.title)+'" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\'">'+
         '<div style="display:none;padding:14px;color:var(--dim);font-size:12.5px">🌿 The picture is slow to arrive on this connection. The description above will help you know the leaf — and always confirm with a living elder.</div>'+
         '<div class="pname">'+escapeHtml(d.title)+(com?' · <i>'+escapeHtml(com)+'</i>':'')+'</div>'+
         (d.extract?'<div class="pdesc">'+escapeHtml(d.extract.slice(0,240))+(d.extract.length>240?'…':'')+'</div>':'')+
         '<div class="pwarn">🌿 Reference only — real plants vary and deadly lookalikes exist. Always confirm with a living elder or herbalist before use.</div>'+
-        (d.url?'<a class="plink" href="'+d.url+'" target="_blank" rel="noopener">see more ↗</a>':'');
+        (link?'<a class="plink" href="'+escapeHtml(link)+'" target="_blank" rel="noopener noreferrer">see more ↗</a>':'');
     }else{
       card.innerHTML='<div class="pnone">🌿 I could not find a clear picture of <b>'+escapeHtml(com||sci)+'</b>. Ask a living elder to show you this leaf in the flesh — that is always safest.</div>';
     }
@@ -166,17 +179,33 @@ async function showPlant(sci, com, afterEl){
   }
   chat.scrollTop=chat.scrollHeight;
 }
-function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// escapes quotes too — this output lands inside alt="…" and href="…" attributes,
+// and the text comes from Wikipedia, so it is not ours to trust.
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// only ever let a plain http(s) link through into an href
+function safeUrl(u){
+  try{ const p=new URL(u,location.origin); return (p.protocol==='http:'||p.protocol==='https:')?p.href:''; }
+  catch(e){ return ''; }
+}
 
 function starter(el){ input.value=el.textContent; send(); }
 
 async function send(){
   const text=input.value.trim();
   if(!text) return;
+  input.value=''; input.style.height='auto';
+  await ask(text);
+}
+
+// Asking is split out from the input box so a failed question can be retried
+// with one tap — on a weak connection the forest often has to be asked twice.
+async function ask(text){
   document.getElementById('starters').style.display='none';
+  document.getElementById('freshBtn').style.display='inline-block';
   addMsg(text,'me');
   history.push({role:'user',content:text});
-  input.value=''; input.style.height='auto';
   sendBtn.disabled=true;
 
   const typing=document.createElement('div');
@@ -192,19 +221,60 @@ async function send(){
     const reply=data.text||"The forest is quiet, child. Ask again.";
     addMsg(reply,'bwa');
     history.push({role:'assistant',content:reply});
+    saveHistory();
   }catch(e){
     typing.remove();
-    addMsg("The wind carried my voice away. Ask me again, little one.",'bwa');
+    history.pop(); // drop the unanswered question so a retry does not ask it twice
+    offerRetry(text);
   }
   sendBtn.disabled=false; input.focus();
+}
+
+function offerRetry(text){
+  const d=document.createElement('div');
+  d.className='msg bwa';
+  d.innerHTML='<span class="who">🌿 Gran Bwa</span>The wind carried my voice away, little one. The connection faltered — ask me again.';
+  const b=document.createElement('button');
+  b.className='retry'; b.textContent='↻ Ask again';
+  b.onclick=()=>{ d.remove(); ask(text); };
+  d.appendChild(b);
+  chat.appendChild(d);
+  chat.scrollTop=chat.scrollHeight;
 }
 
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
-// opening greeting
-fetch('/greeting').then(r=>r.json()).then(d=>{ addMsg(d.text,'bwa'); history.push({role:'assistant',content:d.text}); })
-  .catch(()=>addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa'));
+// ---------- remember the conversation across closings ----------
+// People close the app, lose signal, or run out of battery mid-question.
+// Keep the last stretch of talk so they do not have to explain the illness twice.
+const STORE='granbwa-history-v1';
+function saveHistory(){
+  try{ localStorage.setItem(STORE, JSON.stringify(history.slice(-30))); }catch(e){}
+}
+function clearHistory(){
+  try{ localStorage.removeItem(STORE); }catch(e){}
+  history=[]; chat.innerHTML='';
+  document.getElementById('starters').style.display='flex';
+  greet();
+}
+function greet(){
+  fetch('/greeting').then(r=>r.json()).then(d=>{ addMsg(d.text,'bwa'); history.push({role:'assistant',content:d.text}); })
+    .catch(()=>addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa'));
+}
+
+(function restore(){
+  let saved=null;
+  try{ saved=JSON.parse(localStorage.getItem(STORE)||'null'); }catch(e){}
+  if(Array.isArray(saved) && saved.length){
+    history=saved;
+    saved.forEach(m=>addMsg(m.content, m.role==='assistant'?'bwa':'me'));
+    document.getElementById('starters').style.display='none';
+    document.getElementById('freshBtn').style.display='inline-block';
+  }else{
+    greet();
+  }
+})();
 
 // ---------- PWA: service worker + install prompt ----------
 if('serviceWorker' in navigator){

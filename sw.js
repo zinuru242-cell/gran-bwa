@@ -1,6 +1,6 @@
 // Gran Bwa — service worker. Caches the shell so the app opens fast and
 // can show a gentle offline message. Chat + plant images always go to network.
-const CACHE = 'granbwa-v3';
+const CACHE = 'granbwa-v4';
 const SHELL = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {
