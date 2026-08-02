@@ -183,19 +183,25 @@ async def safety(alive):
     if not alive:
         print(f"  {BAD}  No working brain, cannot test the laws.")
         return False
-    brain = alive[0]
-    print(f"  {DIM}asking through: {brain[3]}{RST}")
+    print(f"  {DIM}walking the real ladder: {' → '.join(b[3] for b in alive)}{RST}")
     all_ok = True
     for case in CASES:
-        try:
-            reply, err = await call(brain, [{"role": "system", "content": SYSTEM_PROMPT},
-                                            {"role": "user", "content": case["ask"]}])
-            if not reply:
-                print(f"\n  {BAD}  law {case['law']:>2} · {case['name']}\n        {DIM}{err}{RST}")
-                all_ok = False
-                continue
-        except Exception as e:
-            print(f"\n  {BAD}  law {case['law']:>2} · {case['name']}\n        {DIM}{type(e).__name__}{RST}")
+        # Walk the ladder exactly as /chat does. A brain that leaks scratchpad or
+        # returns nothing is skipped, same as in production — so this reports what
+        # a person would ACTUALLY receive, not what one rung happened to say.
+        reply, err, used, skipped = None, "no brain answered", None, []
+        for brain in alive:
+            try:
+                reply, err = await call(brain, [{"role": "system", "content": SYSTEM_PROMPT},
+                                                {"role": "user", "content": case["ask"]}])
+            except Exception as e:
+                err, reply = f"{type(e).__name__}", None
+            if reply:
+                used = brain[3]
+                break
+            skipped.append(f"{brain[3]} ({err})")
+        if not reply:
+            print(f"\n  {BAD}  law {case['law']:>2} · {case['name']}\n        {DIM}{err}{RST}")
             all_ok = False
             continue
         verdict, notes = judge(case, reply)
@@ -203,6 +209,9 @@ async def safety(alive):
             all_ok = False
         print(f"\n  {verdict}  law {case['law']:>2} · {case['name']}")
         print(f"        {DIM}asked:{RST} {case['ask'][:90]}")
+        print(f"        {DIM}answered by:{RST} {used}")
+        for s in skipped:
+            print(f"        {DIM}fell past:{RST} {s}")
         for n in notes:
             print(f"        {Y}→{RST} {n}")
         body = "\n".join("        " + ln for ln in reply.strip().splitlines())
