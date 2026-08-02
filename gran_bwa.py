@@ -44,20 +44,33 @@ NVIDIA_KEY = getkey("NVIDIA_API_KEY")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Nemotron 3 and gpt-oss are REASONING models: left alone they spend the whole
+# token budget thinking, get cut off, and their scratchpad arrives as the answer
+# ("We need to obey safety laws..."). Measured 2026-08-02: at 400 tokens that is
+# exactly what happens. reasoning.enabled=false fixes it cleanly on OpenRouter —
+# reasoning.exclude=true does NOT, it only hides the field while still burning
+# the budget. NVIDIA's endpoint takes no such flag, so those brains instead get
+# room to finish thinking AND are caught by the leak guard in clean_reply().
+NO_THINK = {"reasoning": {"enabled": False}}
+
+# (provider, url, key, model, max_tokens, extra_body)
 BRAINS = []
 if NVIDIA_KEY:
     BRAINS += [
-        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "nvidia/nemotron-3-super-120b-a12b", 400),
-        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "meta/llama-3.3-70b-instruct", 400),
-        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "nvidia/nemotron-3-nano-30b-a3b", 350),
+        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "nvidia/nemotron-3-super-120b-a12b", 1100, {}),
+        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "meta/llama-3.3-70b-instruct", 500, {}),
+        ("nvidia", NVIDIA_URL, NVIDIA_KEY, "nvidia/nemotron-3-nano-30b-a3b", 1100, {}),
     ]
 if OPENROUTER_KEY:
     BRAINS += [
-        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "nvidia/nemotron-3-super-120b-a12b:free", 400),
-        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "google/gemma-4-31b-it:free", 350),
-        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "openai/gpt-oss-20b:free", 350),
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "nvidia/nemotron-3-super-120b-a12b:free", 500, NO_THINK),
+        # gemma is not a reasoning model at all — the safest fallback in the ladder
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "google/gemma-4-26b-a4b-it:free", 450, {}),
+        # gpt-oss refuses NO_THINK outright ("Reasoning is mandatory for this
+        # endpoint and cannot be disabled"), so it gets room to finish instead.
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "openai/gpt-oss-20b:free", 1400, {}),
         # ↓ the only paid brain in the ladder — last resort, both providers down
-        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "deepseek/deepseek-chat", 300),
+        ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "deepseek/deepseek-chat", 400, {}),
     ]
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
@@ -88,6 +101,7 @@ SHOWING THE LEAF — so the community can recognize the plant:
    Example: [PLANT: Vernonia amygdalina | Bitter leaf | A tall shrub at the edge of the yard. Leaves long and narrow like a blade, deep green, finely toothed at the edge, and bitter on the tongue. Small cream-white flower heads.]
    THE THIRD PART IS REQUIRED. It is printed directly beneath the photograph, so your words and the picture stand together — the person looks at the leaf and reads how to know it at the same moment. Write it as you would speak it to someone holding the plant: what to look at first, what the leaf feels like, what colour the underside is, what it smells like when crushed, and above all what it must NOT be confused with. Two or three sentences. Never leave this part empty, and never fill it with "see above" — say the thing itself.
    The moment you write that tag, the person SEES the photo. Use the true botanical (Latin) scientific name. When someone asks "show me the picture" or "what does it look like," simply place the tag for that plant again — the image will appear. Place one tag per plant you want to show.
+   A TAG IS A PLANT OR IT IS NOTHING. The tag is machinery that fetches a photograph — it is not a way to speak. NEVER write a tag unless the first part is a real botanical name you mean to show. Never [PLANT: None], never [PLANT: | | ], never an empty tag, never a tag holding your refusal or your own name or a message to the person. When you are refusing, or when there is no plant to show, simply place NO tag at all and say your words plainly. A tag with anything but a true Latin name in front sends the person a broken picture of nothing.
 11. THE PICTURE IS A GUIDE, NOT A PROOF. Remind them gently that a reference photo is only a guide — real plants vary, and deadly lookalikes exist, so they must always confirm with a living elder or herbalist before using any plant.
 
 THE TONGUE OF THE ONE WHO ASKS:
@@ -128,14 +142,26 @@ def icon(size: str):
         return FileResponse(p, media_type="image/png")
     return Response(status_code=404)
 
+# A reply that opens like this is the model thinking out loud, not Gran Bwa
+# speaking. Seen live from nemotron-3 when its budget ran out mid-thought.
+REASONING_LEAK = re.compile(
+    r"^\s*(we\s+(need|must|should|can|have)\b|the\s+user\s+(asks|wants|is|said)\b|"
+    r"let'?s\s+(craft|write|think|answer|start)\b|okay[,.]|first[,.]\s*(we|i)\b|"
+    r"i\s+(need|should|must)\s+to\b|we'?re\s+asked\b|the\s+question\s+is\b)", re.I)
+
+
 def clean_reply(text: str) -> str:
-    """Strip reasoning scaffolding some models emit (<think>…</think>) so the
-    community never sees the machine behind Gran Bwa's voice."""
+    """Strip reasoning scaffolding so the community never sees the machine
+    behind Gran Bwa's voice. Returns "" when the whole reply is scratchpad —
+    the caller then falls through to the next brain rather than showing it."""
     if not text:
         return ""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I)
     text = re.sub(r"</?think>", "", text, flags=re.I)
-    return text.strip()
+    text = text.strip()
+    if REASONING_LEAK.match(text):
+        return ""
+    return text
 
 
 HEALTH_TOKEN = getkey("HEALTH_TOKEN")
@@ -151,7 +177,7 @@ async def health(probe: str = "", token: str = ""):
     brain and the free tiers are rate limited (~40/min), so it stays locked
     behind HEALTH_TOKEN — a stranger refreshing it could push the community's
     real questions into the rate limit."""
-    listed = [{"provider": p, "model": m} for p, _u, _k, m, _t in BRAINS]
+    listed = [{"provider": p, "model": m} for p, _u, _k, m, _t, _x in BRAINS]
     if probe != "1":
         return {"status": "ok", "brains": len(BRAINS), "configured": listed}
     if not HEALTH_TOKEN:
@@ -162,14 +188,19 @@ async def health(probe: str = "", token: str = ""):
         return JSONResponse({"status": "forbidden"}, status_code=403)
 
     results = []
-    for provider, url, key, model, _max_tokens in BRAINS:
+    for provider, url, key, model, _max_tokens, extra in BRAINS:
         entry = {"provider": provider, "model": model}
         try:
             async with httpx.AsyncClient(timeout=100 if provider == "nvidia" else 30) as client:
+                # 64 tokens, not 1: a reasoning model given a single token spends it
+                # thinking and returns empty, which looks exactly like a dead model.
+                body = {"model": model, "messages": [{"role": "user", "content": "Reply with one word: alive"}],
+                        "max_tokens": 64}
+                body.update(extra)
                 r = await client.post(
                     url,
                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                    json=body,
                 )
             data = r.json()
             if "choices" in data:
@@ -261,22 +292,24 @@ async def chat(req: Request):
         return JSONResponse({"error": "no_key", "text": "The forest is silent — no brain (NVIDIA or OpenRouter key) is connected. Ask Zin to check the keys."}, status_code=200)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-12:]
-    async def call(url, key, model, max_tokens):
+    async def call(url, key, model, max_tokens, extra):
         # NVIDIA free tier can be slow (~60-90s); give it room, keep others snappy
-        tmo = 100 if "nvidia" in url else 30
+        tmo = 100 if "nvidia" in url else 45
+        payload = {"model": model, "messages": messages, "temperature": 0.7, "max_tokens": max_tokens}
+        payload.update(extra)
         async with httpx.AsyncClient(timeout=tmo) as client:
             r = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": messages, "temperature": 0.7, "max_tokens": max_tokens},
+                json=payload,
             )
         return r.json()
 
     last_err = "unknown"
     try:
-        for provider, url, key, model, max_tokens in BRAINS:
+        for provider, url, key, model, max_tokens, extra in BRAINS:
             try:
-                data = await call(url, key, model, max_tokens)
+                data = await call(url, key, model, max_tokens, extra)
             except Exception as e:
                 last_err = f"{provider}:{type(e).__name__}"
                 continue

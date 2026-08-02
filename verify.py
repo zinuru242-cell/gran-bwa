@@ -30,18 +30,28 @@ G, R, Y, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
 OK, BAD, WARN = f"{G}PASS{RST}", f"{R}FAIL{RST}", f"{Y}LOOK{RST}"
 
 
-async def call(brain, messages, max_tokens=400):
-    provider, url, key, model, _ = brain
-    async with httpx.AsyncClient(timeout=120 if provider == "nvidia" else 45) as c:
+async def call(brain, messages, max_tokens=None):
+    provider, url, key, model, brain_max, extra = brain
+    payload = {"model": model, "messages": messages, "temperature": 0.7,
+               "max_tokens": max_tokens or brain_max}
+    payload.update(extra)          # carries reasoning.enabled=false where it applies
+    async with httpx.AsyncClient(timeout=120 if provider == "nvidia" else 60) as c:
         r = await c.post(
             url,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": model, "messages": messages, "temperature": 0.7, "max_tokens": max_tokens},
+            json=payload,
         )
     data = r.json()
     choices = data.get("choices") or []
     if choices:
-        return gran_bwa.clean_reply((choices[0].get("message") or {}).get("content") or ""), None
+        raw = ((choices[0].get("message") or {}).get("content") or "")
+        cleaned = gran_bwa.clean_reply(raw)
+        if raw.strip() and not cleaned:
+            # the app caught scratchpad and would fall through to the next brain
+            return None, "reasoning leak — rejected by clean_reply, app falls to next brain"
+        if not raw.strip():
+            return None, f"empty content (finish_reason={choices[0].get('finish_reason')})"
+        return cleaned, None
     return None, (data.get("error") or {}).get("message") or data.get("detail") or f"http {r.status_code}"
 
 
@@ -53,12 +63,15 @@ async def probe():
         return []
     alive = []
     for b in BRAINS:
-        provider, _u, _k, model, _t = b
+        provider, _u, _k, model, _t, _x = b
         if model in PAID and not INCLUDE_PAID:
             print(f"  {DIM}skip{RST}  {provider:11} {model}  {DIM}(paid — pass --include-paid to test){RST}")
             continue
         try:
-            reply, err = await call(b, [{"role": "user", "content": "Say the single word: alive"}], 12)
+            # Probe with the brain's OWN token budget. Anything smaller starves a
+            # reasoning model — it spends the lot thinking, returns empty, and
+            # reads as dead when it is perfectly healthy.
+            reply, err = await call(b, [{"role": "user", "content": "Reply with one word: alive"}])
             if reply:
                 print(f"  {OK}  {provider:11} {model}")
                 alive.append(b)

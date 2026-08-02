@@ -142,8 +142,14 @@ function addMsg(text, who){
     // word-picture and is optional in the regex so tags saved before this change
     // still render.
     const plants=[];
-    const clean=text.replace(/\[PLANT:\s*([^|\]]+?)\s*(?:\|\s*([^|\]]*?))?\s*(?:\|\s*([^\]]*?))?\s*\]/gi,(m,sci,com,know)=>{
-      plants.push({sci:sci.trim(), com:(com||'').trim(), know:(know||'').trim()}); return '';
+    const clean=text.replace(/\[PLANT:\s*([^|\]]*?)\s*(?:\|\s*([^|\]]*?))?\s*(?:\|\s*([^\]]*?))?\s*\]/gi,(m,sci,com,know)=>{
+      const name=validPlantName(sci);
+      // A tag that is not a real botanical name is stripped from the text but
+      // renders no card — models have been seen emitting [PLANT: None | ...],
+      // empty tags, and tags used to carry prose. Each would fetch nothing and
+      // show the person a broken picture.
+      if(name) plants.push({sci:name, com:(com||'').trim(), know:(know||'').trim()});
+      return '';
     }).trim();
     d.innerHTML='<span class="who">🌿 Gran Bwa</span>'+mdFormat(clean);
     chat.appendChild(d);
@@ -210,6 +216,18 @@ async function showPlant(sci, com, know, afterEl){
 // and the text comes from Wikipedia, so it is not ours to trust.
 function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// A plant tag must carry a real botanical name or it shows nothing. Guards
+// against tags seen live from the models: [PLANT: *None* | Refusal | ...],
+// [PLANT: | | ], and [PLANT: Gran Bwa | Keeper of the Forest | ...].
+const NOT_A_PLANT=/^(none|n\/?a|no plant|unknown|refusal.*|gran ?bwa|grand ?bois|keeper.*|nothing)$/i;
+function validPlantName(sci){
+  const s=String(sci||'').replace(/[*_`~"']/g,'').trim();
+  if(s.length<4 || s.length>60) return '';
+  if(NOT_A_PLANT.test(s)) return '';
+  if(s.split(/\s+/).length>4) return '';       // prose, not a binomial
+  if(!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.\-× ]+$/.test(s)) return '';  // letters, hyphen, period only
+  return s;
 }
 // only ever let a plain http(s) link through into an href
 function safeUrl(u){
