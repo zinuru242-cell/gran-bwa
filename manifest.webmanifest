@@ -1,7 +1,7 @@
 {
   "name": "Gran Bwa · The Forest Healer",
   "short_name": "Gran Bwa",
-  "description": "A guide to traditional healing plants, in the voice of Gran Bwa, keeper of the forest. Not a doctor — always confirm with a living elder.",
+  "description": "A guide to traditional healing plants, in the voice of Gran Bwa, keeper of the forest. The forest and the clinic are two hands of the same healing.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
