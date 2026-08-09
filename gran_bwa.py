@@ -14,7 +14,15 @@ import json
 import base64
 import binascii
 import asyncio
+import copy
+import hashlib
+import ipaddress
+import socket
+import time
+from urllib.parse import urljoin, urlsplit
+from collections import defaultdict, deque
 import httpx
+import pycountry
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -289,6 +297,536 @@ def ailment_education(condition, guide):
         "condition": condition, "candidates": candidates,
     }
 
+def normalize_land(value):
+    """Return coarse geography bound to a canonical ISO country identity."""
+    if not isinstance(value, dict):
+        return None
+    country_code = str(value.get("country_code") or "").strip().upper()
+    country_record = pycountry.countries.get(alpha_2=country_code) if re.fullmatch(r"[A-Z]{2}", country_code) else None
+    country = "Kosovo" if country_code == "XK" else (country_record.name if country_record else "")
+    if not country:
+        return None
+    clean = {}
+    for key in ("city", "region"):
+        raw = re.sub(r"\s+", " ", str(value.get(key) or "")).strip()[:80]
+        text = "".join(ch for ch in raw if ch.isalnum() or ch in " .,'’()-").strip()
+        if text:
+            clean[key] = text
+    # Rebuild from administrative fields and the server's canonical country.
+    # Browser labels and country names are advisory and never trusted.
+    parts = []
+    for text in (clean.get("city"), clean.get("region"), country):
+        if text and text.casefold() not in {part.casefold() for part in parts}:
+            parts.append(text)
+    clean["label"] = ", ".join(parts)
+    clean.update({"country": country, "country_code": country_code})
+    return clean
+
+
+NOMINATIM_TEXT_FIELDS = (
+    "city", "town", "village", "municipality", "county",
+    "state", "province", "region", "country", "country_code",
+)
+
+
+def valid_nominatim_record(record):
+    if not isinstance(record, dict) or not isinstance(record.get("address"), dict):
+        return False
+    return all(
+        value is None or isinstance(value, str)
+        for key in NOMINATIM_TEXT_FIELDS
+        if (value := record["address"].get(key)) is not None
+    )
+
+
+def nominatim_land(record):
+    if not valid_nominatim_record(record):
+        return None
+    address = record["address"]
+    city = next((address.get(key) for key in ("city", "town", "village", "municipality", "county")
+                 if address.get(key)), "")
+    return normalize_land({
+        "city": city,
+        "region": address.get("state") or address.get("province") or address.get("region") or "",
+        "country": address.get("country") or "",
+        "country_code": address.get("country_code") or "",
+    })
+
+
+class WindowRateLimiter:
+    """Small in-memory per-client limiter; Railway has one app replica today."""
+    def __init__(self, limit, window_seconds):
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.events = defaultdict(deque)
+
+    def allow(self, identity, now=None):
+        now = time.monotonic() if now is None else now
+        identity = str(identity or "unknown")
+        if identity not in self.events and len(self.events) >= 4096:
+            self.events.pop(next(iter(self.events)), None)
+        queue = self.events[identity]
+        cutoff = now - self.window_seconds
+        while queue and queue[0] <= cutoff:
+            queue.popleft()
+        if len(queue) >= self.limit:
+            return False
+        queue.append(now)
+        return True
+
+
+_EXTERNAL_CACHE = {}
+_CACHE_KEY_SECRET = os.urandom(32)
+_NOMINATIM_LOCK = asyncio.Lock()
+_NOMINATIM_LAST_CALL = 0.0
+LOCATION_RATE = WindowRateLimiter(20, 60)
+LOCATION_GLOBAL_RATE = WindowRateLimiter(60, 60)
+REGIONAL_RATE = WindowRateLimiter(30, 60)
+REGIONAL_GLOBAL_RATE = WindowRateLimiter(120, 60)
+CHAT_RATE = WindowRateLimiter(12, 60)
+CHAT_GLOBAL_RATE = WindowRateLimiter(40, 60)
+VISION_RATE = WindowRateLimiter(6, 60)
+VISION_GLOBAL_RATE = WindowRateLimiter(20, 60)
+LOCATION_BODY_LIMIT = 16 * 1024
+REGIONAL_BODY_LIMIT = 32 * 1024
+CHAT_BODY_LIMIT = 256 * 1024
+VISION_BODY_LIMIT = 5_500_000
+NOMINATIM_AGENT = "GranBwa/2.3 (+https://web-production-1da78.up.railway.app/)"
+
+
+def private_cache_digest(*parts):
+    payload = json.dumps(parts, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.blake2b(payload, key=_CACHE_KEY_SECRET, digest_size=16).hexdigest()
+
+
+def _cache_get(key):
+    item = _EXTERNAL_CACHE.get(key)
+    if item and item[0] > time.monotonic():
+        return item[1]
+    if item:
+        _EXTERNAL_CACHE.pop(key, None)
+    return None
+
+
+def _cache_set(key, value, ttl):
+    if key not in _EXTERNAL_CACHE and len(_EXTERNAL_CACHE) >= 512:
+        _EXTERNAL_CACHE.pop(next(iter(_EXTERNAL_CACHE)), None)
+    _EXTERNAL_CACHE[key] = (time.monotonic() + ttl, value)
+    return value
+
+
+async def _nominatim_get(path, params):
+    """Honor Nominatim's one-request-per-second public-service ceiling globally."""
+    global _NOMINATIM_LAST_CALL
+    async with _NOMINATIM_LOCK:
+        delay = 1.05 - (time.monotonic() - _NOMINATIM_LAST_CALL)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(
+                    f"https://nominatim.openstreetmap.org/{path}",
+                    params=params,
+                    headers={"User-Agent": NOMINATIM_AGENT},
+                )
+        finally:
+            # Even a timeout may have reached the public service; preserve spacing.
+            _NOMINATIM_LAST_CALL = time.monotonic()
+    response.raise_for_status()
+    return response.json()
+
+
+async def search_nominatim(query):
+    query_hash = private_cache_digest("search", query.casefold())
+    key = ("nominatim-search", query_hash)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    raw = await _nominatim_get("search", {
+        "q": query, "format": "jsonv2", "addressdetails": 1, "limit": 5,
+        "featuretype": "settlement",
+    })
+    if not isinstance(raw, list):
+        raise UpstreamUnavailable("Nominatim search returned an invalid payload")
+    if any(not valid_nominatim_record(record) for record in raw):
+        raise UpstreamUnavailable("Nominatim search returned an invalid result record")
+    value = []
+    for record in raw:
+        land = nominatim_land(record)
+        if land and land not in value:
+            value.append(land)
+    if raw and not value:
+        raise UpstreamUnavailable("Nominatim search returned no valid coarse places")
+    return _cache_set(key, value, 86400)
+
+
+async def reverse_nominatim(lat, lon):
+    lat, lon = round(float(lat), 2), round(float(lon), 2)
+    coordinate_hash = private_cache_digest("reverse", f"{lat:.2f}", f"{lon:.2f}")
+    key = ("nominatim-reverse", coordinate_hash)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    raw = await _nominatim_get("reverse", {
+        "lat": round(lat, 2), "lon": round(lon, 2), "format": "jsonv2",
+        "addressdetails": 1, "zoom": 10,
+    })
+    if not isinstance(raw, dict):
+        raise UpstreamUnavailable("Nominatim reverse lookup returned an invalid payload")
+    value = nominatim_land(raw)
+    if value:
+        return _cache_set(key, value, 86400)
+    if str(raw.get("error") or "").strip().casefold() == "unable to geocode":
+        return _cache_set(key, {}, 3600)
+    raise UpstreamUnavailable("Nominatim reverse lookup returned no valid coarse place")
+
+
+def validate_gbif_match_payload(payload):
+    if not isinstance(payload, dict):
+        raise UpstreamUnavailable("GBIF taxonomy returned an invalid payload")
+    match_type = str(payload.get("matchType") or "").upper()
+    if match_type == "NONE":
+        return payload
+    if match_type not in {"EXACT", "FUZZY", "HIGHERRANK"}:
+        raise UpstreamUnavailable("GBIF taxonomy returned an invalid match type")
+    status = payload.get("status") or payload.get("taxonomicStatus")
+    confidence = payload.get("confidence")
+    usage_key = payload.get("usageKey")
+    if not (
+        type(usage_key) is int and usage_key > 0
+        and isinstance(payload.get("canonicalName"), str) and payload["canonicalName"].strip()
+        and isinstance(payload.get("rank"), str) and payload["rank"].strip()
+        and type(confidence) is int and 0 <= confidence <= 100
+        and isinstance(status, str) and status.strip()
+    ):
+        raise UpstreamUnavailable("GBIF taxonomy returned an incomplete match")
+    return payload
+
+
+def exact_confident_species_match(species):
+    return bool(
+        species.get("usageKey")
+        and str(species.get("matchType") or "").upper() == "EXACT"
+        and int(species.get("confidence") or 0) >= 95
+        and str(species.get("rank") or "").upper() in {"SPECIES", "SUBSPECIES", "VARIETY", "FORM"}
+    )
+
+
+def trusted_gbif_match(species):
+    status = str(species.get("status") or species.get("taxonomicStatus") or "").upper()
+    return exact_confident_species_match(species) and status == "ACCEPTED"
+
+
+def accepted_match_from_synonym(match, accepted):
+    accepted_key = match.get("acceptedUsageKey")
+    record_key = accepted.get("key") or accepted.get("usageKey")
+    accepted_name = accepted.get("canonicalName") or accepted.get("scientificName")
+    if (
+        type(accepted_key) is not int
+        or accepted_key <= 0
+        or type(record_key) is not int
+        or record_key != accepted_key
+        or not isinstance(accepted_name, str)
+        or not accepted_name.strip()
+    ):
+        return None
+    merged = {
+        **accepted,
+        "usageKey": accepted_key,
+        "matchType": "EXACT",
+        "confidence": match.get("confidence"),
+        "rank": accepted.get("rank") or match.get("rank"),
+    }
+    return merged if trusted_gbif_match(merged) else None
+
+
+class UpstreamUnavailable(RuntimeError):
+    pass
+
+
+def require_upstream_json(response, source):
+    if response.status_code != 200:
+        raise UpstreamUnavailable(f"{source} returned HTTP {response.status_code}")
+    try:
+        value = response.json()
+    except Exception as exc:
+        raise UpstreamUnavailable(f"{source} returned invalid JSON") from exc
+    if not isinstance(value, (dict, list)):
+        raise UpstreamUnavailable(f"{source} returned an invalid payload")
+    return value
+
+
+def build_regional_context(species, land, occurrence, distributions):
+    """Keep stable taxonomy separate from evidence about one selected land."""
+    country_code = str(land.get("country_code") or "").upper()
+    country_name = str(land.get("country") or "").strip().casefold()
+    local = []
+    for record in distributions or []:
+        record_code = str(record.get("countryCode") or record.get("country_code") or "").strip().upper()
+        record_country = str(record.get("country") or "").strip().casefold()
+        # Only explicit country identity counts. Free-text locality matching makes
+        # Guinea collide with Papua New Guinea and Georgia with the US state.
+        if (record_code and record_code == country_code) or (
+            not record_code and record_country and record_country == country_name
+        ):
+            local.append(record)
+    means = [str(item.get("establishmentMeans") or "").strip().casefold() for item in local]
+    establishment = "unverified"
+    for candidate in ("invasive", "introduced", "naturalised", "naturalized", "native"):
+        if candidate in means:
+            establishment = "naturalized" if candidate == "naturalised" else candidate
+            break
+    threats = list(dict.fromkeys(str(item.get("threatStatus") or "").strip().casefold()
+                                 for item in local if item.get("threatStatus")))
+    occurrence_available = occurrence.get("available", True) is not False
+    count = int(occurrence.get("count") or 0) if occurrence_available else None
+    months = [int(month) for month in (occurrence.get("months") or []) if str(month).isdigit() and 1 <= int(month) <= 12]
+    presence = "source unavailable" if not occurrence_available else ("recorded" if count else "not found in connected records")
+    return {
+        "land": land,
+        "global": {
+            "accepted_name": species.get("canonicalName") or species.get("scientificName") or "",
+            "family": species.get("family") or "",
+            "rank": str(species.get("rank") or "").casefold(),
+            "taxon_key": species.get("usageKey"),
+            "verified_taxonomy": trusted_gbif_match(species),
+        },
+        "regional": {
+            "presence": presence,
+            "establishment": establishment,
+            "invasive_status": "invasive" if establishment == "invasive" else "unverified",
+            "conservation_status": ", ".join(threats) if threats else "unverified",
+            "legal_status": "unverified",
+            "occurrence_records": count,
+            "seasonal_evidence": {
+                "months": months if occurrence_available else [],
+                "label": "observation months — not flowering proof",
+            },
+            "matched_distributions": local,
+        },
+        "cultural": {
+            "ownership_rule": "Location does not transfer cultural ownership; traditions remain attributed to their source communities.",
+            "status": "Ask about a named tradition so Gran Bwa can separate documentation from assumption.",
+        },
+    }
+
+
+REGIONAL_AUTHORITIES = {
+    "ZA": {"name": "SANBI", "url": "https://www.sanbi.org/"},
+    "GH": {"name": "Ghana Forestry Commission", "url": "https://fcghana.org/"},
+    "US": {"name": "USDA PLANTS", "url": "https://plants.usda.gov/"},
+    "CA": {"name": "VASCAN", "url": "https://data.canadensys.net/vascan/"},
+    "AU": {"name": "Atlas of Living Australia", "url": "https://www.ala.org.au/"},
+    "GB": {"name": "NBN Atlas", "url": "https://nbnatlas.org/"},
+    "NZ": {"name": "New Zealand Plant Conservation Network", "url": "https://www.nzpcn.org.nz/"},
+    "IN": {"name": "Botanical Survey of India", "url": "https://bsi.gov.in/"},
+}
+
+
+def regional_cache_key(scientific_name, land):
+    return ("regional", scientific_name.casefold(), land["country_code"])
+
+
+def regional_context_for_land(context, land):
+    result = copy.deepcopy(context)
+    result["land"] = copy.deepcopy(land)
+    return result
+
+
+def cache_regional_context(cache_key, context, land, ttl):
+    stored = copy.deepcopy(context)
+    stored["land"] = {"country": land["country"], "country_code": land["country_code"]}
+    _cache_set(cache_key, stored, ttl)
+    return regional_context_for_land(stored, land)
+
+
+def regional_cache_ttl(occurrence_available, distribution_available):
+    return 21600 if occurrence_available and distribution_available else 300
+
+
+def parse_gbif_occurrence_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    count, facets, results = payload.get("count"), payload.get("facets"), payload.get("results")
+    if type(count) is not int or count < 0 or not isinstance(facets, list) or not isinstance(results, list):
+        return None
+    months = []
+    for facet in facets:
+        if (
+            not isinstance(facet, dict)
+            or not isinstance(facet.get("field"), str)
+            or not isinstance(facet.get("counts"), list)
+        ):
+            return None
+        for item in facet["counts"]:
+            if not isinstance(item, dict):
+                return None
+            name, facet_count = item.get("name"), item.get("count")
+            if (
+                isinstance(name, bool)
+                or not isinstance(name, (str, int))
+                or type(facet_count) is not int
+                or facet_count < 0
+            ):
+                return None
+            if facet["field"].upper() == "MONTH":
+                months.append(str(name))
+    return {"available": True, "count": count, "months": months}
+
+
+def parse_gbif_distribution_payload(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return None
+    relevant_fields = (
+        "countryCode", "country_code", "country", "establishmentMeans", "threatStatus",
+    )
+    results = payload["results"]
+    if not all(
+        isinstance(item, dict)
+        and all(item.get(field) is None or isinstance(item.get(field), str) for field in relevant_fields)
+        for item in results
+    ):
+        return None
+    return results
+
+
+async def fetch_regional_evidence(scientific_name, land):
+    """Join only exact GBIF taxonomy with country-scoped occurrence evidence."""
+    cache_key = regional_cache_key(scientific_name, land)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return regional_context_for_land(cached, land)
+    headers = {"User-Agent": "GranBwa/2.3 (+https://web-production-1da78.up.railway.app/)"}
+    authority = REGIONAL_AUTHORITIES.get(land["country_code"], {
+        "name": "GBIF participating networks", "url": "https://www.gbif.org/the-gbif-network"
+    })
+    async with httpx.AsyncClient(timeout=25, headers=headers) as client:
+        matched = await client.get("https://api.gbif.org/v1/species/match", params={"name": scientific_name})
+        species = validate_gbif_match_payload(require_upstream_json(matched, "GBIF taxonomy"))
+        if exact_confident_species_match(species) and "SYNONYM" in str(species.get("status") or species.get("taxonomicStatus") or "").upper():
+            accepted_key = species.get("acceptedUsageKey") or species.get("acceptedKey")
+            if type(accepted_key) is not int or accepted_key <= 0:
+                raise UpstreamUnavailable("GBIF synonym match omitted a valid accepted usage key")
+            accepted_response = await client.get(f"https://api.gbif.org/v1/species/{accepted_key}")
+            accepted_record = require_upstream_json(accepted_response, "GBIF accepted taxonomy")
+            if not isinstance(accepted_record, dict):
+                raise UpstreamUnavailable("GBIF accepted taxonomy returned an invalid payload")
+            resolved = accepted_match_from_synonym(species, accepted_record)
+            if not resolved:
+                raise UpstreamUnavailable("GBIF synonym did not resolve to a valid accepted taxon")
+            species = resolved
+        if not species or not trusted_gbif_match(species):
+            context = build_regional_context(
+                {"canonicalName": scientific_name}, land,
+                {"available": False, "count": 0, "months": []}, [],
+            )
+            context["authority"] = authority
+            context["sources"] = [{"name": f"Local authority — {authority['name']}", "url": authority["url"]}]
+            return cache_regional_context(cache_key, context, land, 3600)
+        key = species["usageKey"]
+        occurrence_call = client.get("https://api.gbif.org/v1/occurrence/search", params={
+            "taxon_key": key, "country": land["country_code"], "limit": 0,
+            "facet": "month", "facetLimit": 12,
+        })
+        distribution_call = client.get(f"https://api.gbif.org/v1/species/{key}/distributions", params={"limit": 300})
+        occurrence_response, distribution_response = await asyncio.gather(occurrence_call, distribution_call)
+    occurrence = None
+    if occurrence_response.status_code == 200:
+        try:
+            occurrence = parse_gbif_occurrence_payload(occurrence_response.json())
+        except (TypeError, ValueError, json.JSONDecodeError):
+            occurrence = None
+    occurrence_available = occurrence is not None
+    if occurrence is None:
+        occurrence = {"available": False, "count": 0, "months": []}
+
+    distributions = None
+    if distribution_response.status_code == 200:
+        try:
+            distributions = parse_gbif_distribution_payload(distribution_response.json())
+        except (TypeError, ValueError, json.JSONDecodeError):
+            distributions = None
+    distribution_available = distributions is not None
+    context = build_regional_context(species, land, occurrence, distributions or [])
+    context["regional"]["distribution_source"] = (
+        "available" if distribution_available else "source unavailable"
+    )
+    context["authority"] = authority
+    context["sources"] = [
+        {"name": "GBIF accepted taxonomy", "url": f"https://www.gbif.org/species/{key}"},
+        {"name": f"GBIF records in {land['country']}",
+         "url": f"https://www.gbif.org/occurrence/search?taxon_key={key}&country={land['country_code']}"},
+        {"name": f"Local authority — {authority['name']}", "url": authority["url"]},
+    ]
+    ttl = regional_cache_ttl(occurrence_available, distribution_available)
+    return cache_regional_context(cache_key, context, land, ttl)
+
+
+def choose_active_land(home=None, observation=None):
+    """Choose ecological context without mutating either stored land record."""
+    selected, source = (observation, "observation") if observation else (home, "home")
+    if not selected:
+        return None
+    return {**selected, "source": source}
+
+
+LAND_CONTEXT_TERMS = (
+    "here", "local", "nearby", "near me", "my area", "where i live", "region", "country",
+    "native", "indigenous", "introduced", "naturalized", "naturalised", "invasive", "protected",
+    "legal", "law", "conservation", "season", "seasonal", "flower", "flowering", "harvest", "wild",
+    "climate", "grow in", "grows in", "growing in", "found in", "occur in", "occurs in", "occurring in",
+)
+
+
+def question_needs_land_context(text):
+    text = str(text or "").casefold()
+    return any(re.search(rf"\b{re.escape(term)}\b", text) for term in LAND_CONTEXT_TERMS)
+
+
+def sanitize_chat_history(history):
+    if not isinstance(history, list):
+        return []
+    clean = []
+    for item in history:
+        if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        content = content.strip()
+        if content:
+            if len(content) > 4000:
+                content = content[:2000] + "\n[…middle omitted…]\n" + content[-2000:]
+            clean.append({"role": item["role"], "content": content})
+    return clean[-12:]
+
+
+def latest_raw_user_message(history):
+    if not isinstance(history, list):
+        return ""
+    for item in reversed(history):
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "user"
+            and isinstance(item.get("content"), str)
+        ):
+            return item["content"]
+    return ""
+
+
+def land_context_instruction(home=None, observation=None):
+    land = choose_active_land(normalize_land(home), normalize_land(observation))
+    if not land:
+        return ""
+    return (
+        f"REGIONAL RELEVANCE: The user's active {land['source']} country is the canonical ISO entry "
+        f"{land['country']} ({land['country_code']}). City and region labels are intentionally excluded from this instruction. "
+        "Use the country only to shape relevance. Do not assume native, invasive, legal, conservation, seasonal, or cultural status. "
+        "State when a regional claim is unverified and direct legal/conservation checks to a local authority. "
+        "Location never transfers cultural ownership: attribute every tradition to its actual source community."
+    )
+
+
 app = FastAPI(title="Gran Bwa")
 
 from fastapi.responses import FileResponse, Response
@@ -388,30 +926,226 @@ async def health(probe: str = "", token: str = ""):
     return {"status": "ok" if alive else "no_working_brain",
             "alive": alive, "configured": len(BRAINS), "brains": results}
 
-@app.get("/img")
-async def img_proxy(u: str = ""):
-    """Proxy a Wikipedia image through our own server so it loads fast
-    and reliably on slow/restricted connections (the phone only talks to us)."""
-    if not u or "wikimedia.org" not in u:
-        return Response(status_code=400)
+ALLOWED_IMAGE_TYPES = {"image/avif", "image/webp", "image/jpeg", "image/png", "image/gif"}
+MAX_PROXY_IMAGE_BYTES = 8 * 1024 * 1024
+IMAGE_RATE = WindowRateLimiter(60, 60)
+IMAGE_GLOBAL_RATE = WindowRateLimiter(300, 60)
+
+
+def is_allowed_wikimedia_url(raw_url):
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-            r = await client.get(u, headers={
-                "User-Agent": "Mozilla/5.0 (GranBwa Forest Healer; community plant guide; +https://web-production-1da78.up.railway.app)",
-                "Accept": "image/avif,image/webp,image/jpeg,image/png,*/*",
-                "Referer": "https://en.wikipedia.org/",
-            })
-        if r.status_code == 200:
-            return Response(content=r.content,
-                            media_type=r.headers.get("content-type", "image/jpeg"),
-                            headers={"Cache-Control": "public, max-age=86400"})
-        return Response(content=f"upstream {r.status_code}".encode(), status_code=502)
-    except Exception as e:
-        return Response(content=f"proxy error: {type(e).__name__}".encode(), status_code=502)
+        parsed = urlsplit(str(raw_url or ""))
+        host = (parsed.hostname or "").rstrip(".").casefold()
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme.casefold() == "https"
+        and host
+        and (host == "wikimedia.org" or host.endswith(".wikimedia.org"))
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+    )
+
+
+def public_hostname_addresses(hostname):
+    try:
+        addresses = {
+            str(info[4][0]).split("%", 1)[0]
+            for info in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+        }
+        return addresses if addresses and all(ipaddress.ip_address(address).is_global for address in addresses) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def hostname_resolves_publicly(hostname):
+    return bool(public_hostname_addresses(hostname))
+
+
+def response_peer_matches(response, expected_addresses):
+    try:
+        stream = response.extensions.get("network_stream")
+        peer = stream.get_extra_info("server_addr") if stream else None
+        address = str(peer[0]).split("%", 1)[0] if peer else ""
+        return bool(
+            address in expected_addresses
+            and ipaddress.ip_address(address).is_global
+        )
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return False
+
+
+def wikimedia_redirect_url(current_url, location):
+    candidate = urljoin(current_url, str(location or ""))
+    return candidate if is_allowed_wikimedia_url(candidate) else None
+
+
+async def validated_wikimedia_target(raw_url):
+    if not is_allowed_wikimedia_url(raw_url):
+        return None
+    hostname = urlsplit(raw_url).hostname
+    addresses = await asyncio.to_thread(public_hostname_addresses, hostname) if hostname else set()
+    return (raw_url, addresses) if addresses else None
+
+
+@app.get("/img")
+async def img_proxy(req: Request, u: str = ""):
+    """Bounded Wikimedia-only image proxy with redirect, DNS, and peer validation."""
+    identity = req.client.host if req.client else "unknown"
+    if not IMAGE_RATE.allow(identity) or not IMAGE_GLOBAL_RATE.allow("all"):
+        return Response(status_code=429)
+    target = await validated_wikimedia_target(u)
+    if not target:
+        return Response(status_code=400)
+    current, expected_addresses = target
+    headers = {
+        "User-Agent": "Mozilla/5.0 (GranBwa Forest Healer; community plant guide; +https://web-production-1da78.up.railway.app)",
+        "Accept": "image/avif,image/webp,image/jpeg,image/png,image/gif",
+        "Referer": "https://en.wikipedia.org/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+            for _ in range(4):
+                async with client.stream("GET", current, headers=headers) as response:
+                    if not response_peer_matches(response, expected_addresses):
+                        return Response(status_code=502)
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        redirect = wikimedia_redirect_url(current, response.headers.get("location"))
+                        target = await validated_wikimedia_target(redirect) if redirect else None
+                        if not target:
+                            return Response(status_code=400)
+                        current, expected_addresses = target
+                        continue
+                    if response.status_code != 200:
+                        return Response(status_code=502)
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+                    if content_type not in ALLOWED_IMAGE_TYPES:
+                        return Response(status_code=415)
+                    declared = response.headers.get("content-length")
+                    if declared and int(declared) > MAX_PROXY_IMAGE_BYTES:
+                        return Response(status_code=413)
+                    chunks, size = [], 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > MAX_PROXY_IMAGE_BYTES:
+                            return Response(status_code=413)
+                        chunks.append(chunk)
+                    return Response(
+                        content=b"".join(chunks), media_type=content_type,
+                        headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
+                    )
+        return Response(status_code=502)
+    except (httpx.HTTPError, OSError, ValueError):
+        return Response(status_code=502)
 
 @app.get("/greeting")
 def greeting():
     return {"text": GREETING}
+
+
+async def request_json_object(req, max_bytes):
+    try:
+        declared = req.headers.get("content-length")
+        if declared is not None:
+            declared_size = int(declared)
+            if declared_size < 0:
+                return None, "invalid"
+            if declared_size > max_bytes:
+                return None, "too_large"
+    except (TypeError, ValueError):
+        return None, "invalid"
+
+    raw = bytearray()
+    try:
+        async for chunk in req.stream():
+            if len(raw) + len(chunk) > max_bytes:
+                return None, "too_large"
+            raw.extend(chunk)
+        body = json.loads(bytes(raw))
+    except Exception:
+        return None, "invalid"
+    return (body, None) if isinstance(body, dict) else (None, "invalid")
+
+
+# Geocoder endpoints
+@app.post("/location-search")
+async def location_search(req: Request):
+    identity = req.client.host if req.client else "unknown"
+    if not LOCATION_RATE.allow(identity) or not LOCATION_GLOBAL_RATE.allow("all"):
+        return JSONResponse({"detail": "Location lookup limit reached. Try again shortly."}, status_code=429)
+    body, body_error = await request_json_object(req, LOCATION_BODY_LIMIT)
+    if body_error == "too_large":
+        return JSONResponse({"detail": "Location request is too large."}, status_code=413)
+    if body is None:
+        return JSONResponse({"detail": "A JSON search object is required."}, status_code=400)
+    query = re.sub(r"\s+", " ", str(body.get("q") or "")).strip()[:120]
+    if len(query) < 2:
+        return {"locations": []}
+    try:
+        records = await search_nominatim(query)
+    except Exception:
+        return JSONResponse({"detail": "Location search is temporarily unavailable."}, status_code=503)
+    locations = []
+    for record in records:
+        land = normalize_land(record) or nominatim_land(record)
+        if land and land not in locations:
+            locations.append(land)
+    return {"locations": locations[:5]}
+
+
+@app.post("/resolve-location")
+async def resolve_location(req: Request):
+    identity = req.client.host if req.client else "unknown"
+    if not LOCATION_RATE.allow(identity) or not LOCATION_GLOBAL_RATE.allow("all"):
+        return JSONResponse({"detail": "Location lookup limit reached. Try again shortly."}, status_code=429)
+    body, body_error = await request_json_object(req, LOCATION_BODY_LIMIT)
+    if body_error == "too_large":
+        return JSONResponse({"detail": "Location request is too large."}, status_code=413)
+    if body is None:
+        return JSONResponse({"detail": "A JSON location object is required."}, status_code=400)
+    try:
+        lat, lon = float(body.get("lat")), float(body.get("lon"))
+    except (TypeError, ValueError):
+        return JSONResponse({"detail": "Valid coordinates are required."}, status_code=400)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return JSONResponse({"detail": "Valid coordinates are required."}, status_code=400)
+    # About 1 km precision at the equator: enough for regional ecology, not a home address.
+    lat, lon = round(lat, 2), round(lon, 2)
+    try:
+        record = await reverse_nominatim(lat, lon)
+    except Exception:
+        return JSONResponse({"detail": "Location service is temporarily unavailable."}, status_code=503)
+    land = normalize_land(record) or nominatim_land(record)
+    if not land:
+        return JSONResponse({"detail": "No coarse region was found for that location."}, status_code=404)
+    return {"location": land}
+
+
+@app.post("/regional-context")
+async def regional_context(req: Request):
+    identity = req.client.host if req.client else "unknown"
+    if not REGIONAL_RATE.allow(identity) or not REGIONAL_GLOBAL_RATE.allow("all"):
+        return JSONResponse({"detail": "Regional evidence limit reached. Try again shortly."}, status_code=429)
+    body, body_error = await request_json_object(req, REGIONAL_BODY_LIMIT)
+    if body_error == "too_large":
+        return JSONResponse({"detail": "Regional-context request is too large."}, status_code=413)
+    if body is None:
+        return JSONResponse({"detail": "A JSON regional-context object is required."}, status_code=400)
+    name = re.sub(r"\s+", " ", str(body.get("scientific_name") or "")).strip()
+    if not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.\-× ]{2,59}", name):
+        return JSONResponse({"detail": "A valid botanical name is required."}, status_code=400)
+    home = normalize_land(body.get("home"))
+    observation = normalize_land(body.get("observation"))
+    land = choose_active_land(home, observation)
+    if not land:
+        return JSONResponse({"detail": "Choose a land before requesting regional context."}, status_code=400)
+    try:
+        return await fetch_regional_evidence(name, land)
+    except Exception:
+        return JSONResponse({"detail": "Regional evidence is temporarily unavailable."}, status_code=503)
+
 
 @app.get("/plant-image")
 async def plant_image(name: str = "", common: str = ""):
@@ -483,8 +1217,41 @@ def decode_photo_data(value: str):
     return raw, mime, None
 
 
+def normalize_vision_vote(value):
+    if not isinstance(value, dict) or type(value.get("identified")) is not bool:
+        return None
+    identified = value["identified"]
+    scientific_name = value.get("scientific_name", "")
+    common_name = value.get("common_name", "")
+    confidence = value.get("confidence", "low")
+    visible_traits = value.get("visible_traits", [])
+    lookalikes = value.get("lookalikes", [])
+    if (
+        not isinstance(scientific_name, str)
+        or not isinstance(common_name, str)
+        or not isinstance(confidence, str)
+        or confidence not in {"high", "medium", "low"}
+        or not isinstance(visible_traits, list)
+        or not all(isinstance(item, str) for item in visible_traits)
+        or not isinstance(lookalikes, list)
+        or not all(isinstance(item, str) for item in lookalikes)
+    ):
+        return None
+    name = re.sub(r"\s+", " ", scientific_name).strip()
+    if identified and not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.\-× ]{2,59}", name):
+        return None
+    return {
+        "identified": identified,
+        "scientific_name": name,
+        "common_name": re.sub(r"\s+", " ", common_name).strip(),
+        "confidence": confidence,
+        "visible_traits": visible_traits,
+        "lookalikes": lookalikes,
+    }
+
+
 def parse_vision_vote(text: str):
-    """Extract one JSON object from a vision model reply; ignore surrounding fences."""
+    """Extract and strictly validate one vision-model JSON vote."""
     match = re.search(r"\{.*\}", text or "", re.S)
     if not match:
         return None
@@ -492,22 +1259,21 @@ def parse_vision_vote(text: str):
         value = json.loads(match.group(0))
     except (json.JSONDecodeError, TypeError):
         return None
-    return value if isinstance(value, dict) else None
+    return normalize_vision_vote(value)
 
 
 def build_photo_consensus(votes):
     """Combine independent model observations without allowing model confidence
     to become botanical certainty. Exact two-model agreement is capped at medium."""
     usable = []
-    for vote in votes:
-        name = re.sub(r"\s+", " ", str(vote.get("scientific_name") or "")).strip()
-        if not vote.get("identified") or not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.\-× ]{2,59}", name):
+    for raw_vote in votes if isinstance(votes, list) else []:
+        vote = normalize_vision_vote(raw_vote)
+        if not vote or not vote["identified"]:
             continue
         item = dict(vote)
-        item["scientific_name"] = name
-        item["common_name"] = re.sub(r"\s+", " ", str(vote.get("common_name") or name)).strip()[:80]
-        item["visible_traits"] = [str(x).strip()[:160] for x in (vote.get("visible_traits") or []) if str(x).strip()][:5]
-        item["lookalikes"] = [str(x).strip()[:100] for x in (vote.get("lookalikes") or []) if str(x).strip()][:5]
+        item["common_name"] = (vote["common_name"] or vote["scientific_name"])[:80]
+        item["visible_traits"] = [x.strip()[:160] for x in vote["visible_traits"] if x.strip()][:5]
+        item["lookalikes"] = [x.strip()[:100] for x in vote["lookalikes"] if x.strip()][:5]
         usable.append(item)
 
     groups = {}
@@ -593,9 +1359,14 @@ async def analyze_plant_photo(raw: bytes, mime: str):
 
 @app.post("/identify-plant")
 async def identify_plant(req: Request):
-    if int(req.headers.get("content-length") or 0) > 5_500_000:
+    identity = req.client.host if req.client else "unknown"
+    if not VISION_RATE.allow(identity) or not VISION_GLOBAL_RATE.allow("all"):
+        return JSONResponse({"detail": "Plant identification limit reached. Try again shortly."}, status_code=429)
+    body, body_error = await request_json_object(req, VISION_BODY_LIMIT)
+    if body_error == "too_large":
         return JSONResponse({"detail": "Photograph is too large; use the camera button so Gran Bwa can resize it."}, status_code=413)
-    body = await req.json()
+    if body is None:
+        return JSONResponse({"detail": "A JSON photograph object is required."}, status_code=400)
     raw, mime, error = decode_photo_data(str(body.get("image") or ""))
     if error == 413:
         return JSONResponse({"detail": "Photograph is too large; use the camera button so Gran Bwa can resize it."}, status_code=413)
@@ -616,10 +1387,17 @@ async def identify_plant(req: Request):
 
 @app.post("/chat")
 async def chat(req: Request):
-    body = await req.json()
-    history = body.get("messages", [])
-    latest_user = next((str(item.get("content") or "") for item in reversed(history)
-                        if item.get("role") == "user"), "")
+    identity = req.client.host if req.client else "unknown"
+    if not CHAT_RATE.allow(identity) or not CHAT_GLOBAL_RATE.allow("all"):
+        return JSONResponse({"detail": "Conversation limit reached. Try again shortly."}, status_code=429)
+    body, body_error = await request_json_object(req, CHAT_BODY_LIMIT)
+    if body_error == "too_large":
+        return JSONResponse({"detail": "Chat request is too large."}, status_code=413)
+    if body is None:
+        return JSONResponse({"detail": "A JSON chat object is required."}, status_code=400)
+    raw_history = body.get("messages")
+    latest_user = latest_raw_user_message(raw_history)
+    history = sanitize_chat_history(raw_history)
 
     # Hard danger signs outrank every educational route and never name a plant.
     urgent = urgent_safety_reply(latest_user)
@@ -635,7 +1413,14 @@ async def chat(req: Request):
     if not BRAINS:
         return JSONResponse({"error": "no_key", "text": "The forest is silent — no brain (NVIDIA or OpenRouter key) is connected. Ask Zin to check the keys."}, status_code=200)
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-12:]
+    regional_instruction = (
+        land_context_instruction(body.get("home"), body.get("observation"))
+        if question_needs_land_context(latest_user) else ""
+    )
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if regional_instruction:
+        messages.append({"role": "system", "content": regional_instruction})
+    messages += history
     async def call(url, key, model, max_tokens, extra):
         # NVIDIA free tier can be slow (~60-90s); give it room, keep others snappy
         tmo = 100 if "nvidia" in url else 45

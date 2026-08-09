@@ -119,6 +119,25 @@
     padding:8px 16px; border-radius:16px; cursor:pointer; width:auto; height:auto;
   }
   .retry:hover{background:rgba(212,175,55,.3)}
+  .land-badge{display:block;margin:7px auto 0;width:auto;height:auto;border-radius:16px;padding:6px 12px;font-size:11px;letter-spacing:.5px;background:rgba(58,90,52,.45);color:var(--gb);border:1px solid var(--line)}
+  dialog{color:var(--ink);background:linear-gradient(160deg,#182315,#0d110a);border:1px solid rgba(212,175,55,.45);border-radius:18px;width:min(94vw,520px);max-height:88dvh;margin:auto;padding:0;box-shadow:0 18px 70px #000;overflow:auto}
+  dialog::backdrop{background:rgba(0,0,0,.78);backdrop-filter:blur(3px)}
+  .land-head{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:16px 18px;background:#12180f;border-bottom:1px solid var(--line);z-index:2}
+  .land-head h2{font-size:18px;color:var(--gb);font-weight:400;letter-spacing:1px}
+  .land-close{width:34px;height:34px;font-size:16px;background:rgba(255,255,255,.08);color:var(--ink)}
+  .land-body{padding:16px}.land-body p{color:var(--dim);font-size:12px;line-height:1.55;margin-bottom:12px}.land-body a{color:var(--leaf)}
+  .land-modes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .land-action{width:100%;height:auto;border-radius:12px;padding:10px;font-size:12px;background:rgba(58,90,52,.55);color:var(--ink);border:1px solid var(--line)}
+  .land-action.active{background:linear-gradient(180deg,var(--gold),var(--gd));color:#0a1207}
+  .land-search-row{display:flex;gap:8px;margin:12px 0 8px}.land-search-row input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:11px;font-size:15px}
+  .land-search-row button{width:auto;height:auto;border-radius:10px;padding:8px 13px;font-size:13px}
+  .land-results{display:flex;flex-direction:column;gap:7px;margin:8px 0 13px}.land-result{text-align:left;width:100%;height:auto;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.4;background:rgba(126,168,106,.12);color:var(--ink);border:1px solid var(--line)}
+  .land-divider{text-align:center;color:var(--dim);font-size:10px;letter-spacing:2px;margin:12px 0}
+  .land-danger{background:rgba(120,45,35,.2);color:#e7b7a9;border-color:rgba(210,100,70,.28);margin-top:8px}
+  .land-status{padding:10px;border-radius:10px;background:rgba(212,175,55,.08);color:var(--gb);font-size:11px;line-height:1.5;margin-bottom:10px}
+  .landcard{align-self:flex-start;max-width:88%;background:linear-gradient(160deg,rgba(20,29,17,.98),rgba(11,15,9,.98));border:1px solid rgba(212,175,55,.28);border-radius:14px;padding:13px 14px;margin-top:-9px}
+  .landcard h3{color:var(--gb);font-size:13px;letter-spacing:1px;margin-bottom:8px}.landcard .ctx{font-size:12px;line-height:1.55;color:var(--ink);margin:5px 0}.landcard .ctx b{color:var(--leaf)}
+  .landcard .evidence-note{color:var(--dim);font-size:10.5px;line-height:1.45;border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.landcard a{color:var(--leaf);font-size:11px;margin-right:10px}
 </style>
 </head>
 <body>
@@ -126,7 +145,8 @@
     <div class="sigil">🜁 &nbsp; 🌿 &nbsp; 🜃</div>
     <h1>GRAN BWA</h1>
     <div class="role">Grand Bois · Keeper of the Forest</div>
-    <div class="version" title="Condition-first education and two-reader camera identification are active">v2.2 · CAMERA VISION · LIVE</div>
+    <div class="version" title="Global home and observation land context is active">v2.3 · LAND CONTEXT · LIVE</div>
+    <button id="landBadge" class="land-badge" onclick="openLandDialog()">📍 Choose land</button>
     <button id="installBtn" class="hbtn" onclick="installApp()" style="display:none">📲 Install</button>
     <button id="freshBtn" class="hbtn" onclick="clearHistory()" style="display:none">🌱 New talk</button>
   </header>
@@ -135,6 +155,25 @@
     <span class="full">🌿 The forest and the clinic are two hands of the same healing. For grave sickness — a child, blood, poisoning — <b>a doctor first</b>. And let a living elder put the leaf in your hand before you use it.</span>
     <span class="short">🌿 Two hands of the same healing — <span class="tap">tap to read</span></span>
   </div>
+
+  <dialog id="landDialog" aria-labelledby="landTitle">
+    <div class="land-head"><h2 id="landTitle">🌍 Which land guides this reading?</h2><button class="land-close" onclick="closeLandDialog()" aria-label="Close">✕</button></div>
+    <div class="land-body">
+      <p>The plant keeps one botanical identity, but native, introduced, invasive, seasonal, conservation and legal context can change across lands.</p>
+      <div class="land-modes">
+        <button id="homeMode" class="land-action active" onclick="setLandMode('home')">🏠 Set as home land</button>
+        <button id="observationMode" class="land-action" onclick="setLandMode('observation')">🌱 Use for this observation</button>
+      </div>
+      <div id="landStatus" class="land-status">No land selected.</div>
+      <button class="land-action" onclick="useApproxLocation()">◎ Use approximate device location</button>
+      <div class="land-divider">OR CHOOSE MANUALLY</div>
+      <div class="land-search-row"><input id="landSearch" placeholder="City, region, or country — never a street address" autocomplete="off"><button onclick="searchLands()">Search</button></div>
+      <div id="landResults" class="land-results"></div>
+      <p>🔒 Exact coordinates are never stored. Device coordinates are rounded before lookup and photograph metadata is removed during resizing. Your coarse selected land is sent to Gran Bwa’s server for regional evidence, and to the connected AI provider only when your question asks for regional relevance. Only city/region/country is saved on this device. Manual place-search text is sent to Nominatim, so never enter a street address. Place search © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p>
+      <button class="land-action" onclick="continueWithoutLocation()">Continue without location</button>
+      <button class="land-action land-danger" onclick="forgetAllLand()">Forget all land settings</button>
+    </div>
+  </dialog>
 
   <div id="chat"></div>
 
@@ -161,6 +200,110 @@ const input=document.getElementById('input');
 const sendBtn=document.getElementById('send');
 const cameraBtn=document.getElementById('cameraBtn');
 let history=[];
+
+const HOME_LAND_KEY='granbwa-home-land-v1';
+const OBSERVATION_LAND_KEY='granbwa-observation-land-v1';
+let homeLand=readLand(localStorage,HOME_LAND_KEY);
+let observationLand=readLand(sessionStorage,OBSERVATION_LAND_KEY);
+let landMode='home';
+let landResults=[];
+let landOperationGeneration=0;
+let searchGeneration=0;
+let regionalGeneration=0;
+let plantCardSequence=0;
+
+function projectLand(value){
+  if(!value||typeof value!=='object') return null;
+  const country=String(value.country||'').replace(/\s+/g,' ').trim().slice(0,80);
+  const country_code=String(value.country_code||'').trim().toUpperCase();
+  if(!country||!/^[A-Z]{2}$/.test(country_code)) return null;
+  const land={country,country_code};
+  for(const key of ['city','region']){
+    const text=String(value[key]||'').replace(/\s+/g,' ').trim().slice(0,80);
+    if(text) land[key]=text;
+  }
+  land.label=[land.city,land.region,land.country].filter((v,i,a)=>v&&a.findIndex(x=>x.toLowerCase()===v.toLowerCase())===i).join(', ');
+  return land;
+}
+function readLand(storage,key){
+  try{ return projectLand(JSON.parse(storage.getItem(key)||'null')); }catch(e){ return null; }
+}
+function activeLand(){ return observationLand||homeLand||null; }
+function updateLandUI(){
+  const active=activeLand();
+  const badge=document.getElementById('landBadge');
+  badge.textContent=active?'📍 '+(active.city||active.region||active.country)+(observationLand?' · observation':' · home'):'📍 Choose land';
+  const chosen=landMode==='observation'?observationLand:homeLand;
+  document.getElementById('landStatus').textContent=chosen?(landMode==='observation'?'Observation: ':'Home: ')+chosen.label:'No '+landMode+' land selected.';
+}
+function openLandDialog(){ updateLandUI(); document.getElementById('landDialog').showModal(); }
+function closeLandDialog(){ landOperationGeneration++; searchGeneration++; document.getElementById('landDialog').close(); }
+function setLandMode(mode){
+  landOperationGeneration++; searchGeneration++;
+  landMode=mode==='observation'?'observation':'home';
+  document.getElementById('homeMode').classList.toggle('active',landMode==='home');
+  document.getElementById('observationMode').classList.toggle('active',landMode==='observation');
+  document.getElementById('landResults').replaceChildren();
+  updateLandUI();
+}
+function saveSelectedLand(value,targetMode=landMode){
+  const land=projectLand(value);
+  if(!land) return;
+  landOperationGeneration++;
+  if(targetMode==='observation'){
+    observationLand=land; try{sessionStorage.setItem(OBSERVATION_LAND_KEY,JSON.stringify(land));}catch(e){}
+  }else{
+    homeLand=land; try{localStorage.setItem(HOME_LAND_KEY,JSON.stringify(land));}catch(e){}
+  }
+  updateLandUI(); closeLandDialog(); refreshRegionalCards();
+}
+async function searchLands(){
+  const q=document.getElementById('landSearch').value.trim();
+  const box=document.getElementById('landResults');
+  const generation=++searchGeneration;
+  const targetMode=landMode;
+  if(q.length<2){box.textContent='Name a city, province/state, or country.';return;}
+  box.textContent='🌿 Searching the world map…';
+  try{
+    const r=await fetch('/location-search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})}); const d=await r.json();
+    if(generation!==searchGeneration) return;
+    landResults=d.locations||[]; box.innerHTML='';
+    if(!r.ok||!landResults.length){box.textContent=r.status===429?'Too many map lookups. Wait a moment and try again.':'No matching land found. Try a broader place name.';return;}
+    landResults.forEach((land,i)=>{const b=document.createElement('button');b.className='land-result';b.textContent=land.label;b.onclick=()=>saveSelectedLand(landResults[i],targetMode);box.appendChild(b);});
+  }catch(e){if(generation===searchGeneration) box.textContent='The map is quiet. Try again.';}
+}
+function useApproxLocation(){
+  const status=document.getElementById('landStatus');
+  if(!navigator.geolocation){status.textContent='This device does not offer location lookup. Search manually instead.';return;}
+  const generation=++landOperationGeneration;
+  const targetMode=landMode;
+  status.textContent='Finding only your approximate region…';
+  navigator.geolocation.getCurrentPosition(async position=>{
+    if(generation!==landOperationGeneration) return;
+    const lat=Math.round(position.coords.latitude*100)/100;
+    const lon=Math.round(position.coords.longitude*100)/100;
+    try{
+      const r=await fetch('/resolve-location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lat,lon})});
+      const d=await r.json();
+      if(generation!==landOperationGeneration) return;
+      if(!r.ok||!d.location) throw new Error('not-found');
+      saveSelectedLand(d.location,targetMode);
+    }catch(e){if(generation===landOperationGeneration) status.textContent='The region could not be resolved. Search manually instead.';}
+  },()=>{if(generation===landOperationGeneration) status.textContent='Location was not shared. Nothing was stored; search manually if you wish.';},{enableHighAccuracy:false,maximumAge:600000,timeout:12000});
+}
+function continueWithoutLocation(){
+  landOperationGeneration++; searchGeneration++;
+  if(landMode==='observation'){observationLand=null;try{sessionStorage.removeItem(OBSERVATION_LAND_KEY);}catch(e){}}
+  else{homeLand=null;try{localStorage.removeItem(HOME_LAND_KEY);}catch(e){}}
+  updateLandUI();closeLandDialog();refreshRegionalCards();
+}
+function forgetAllLand(){
+  landOperationGeneration++; searchGeneration++;
+  homeLand=null;observationLand=null;
+  try{localStorage.removeItem(HOME_LAND_KEY);sessionStorage.removeItem(OBSERVATION_LAND_KEY);}catch(e){}
+  updateLandUI();closeLandDialog();refreshRegionalCards();
+}
+updateLandUI();
 
 function addMsg(text, who){
   const d=document.createElement('div');
@@ -202,9 +345,61 @@ function mdFormat(s){
   return t;
 }
 
+function refreshRegionalCards(){
+  regionalGeneration++;
+  document.querySelectorAll('.plantcard[data-sci]').forEach(card=>showRegionalContext(card.dataset.sci,card,true));
+}
+async function showRegionalContext(sci, plantCard, force=false){
+  const plantId=plantCard.dataset.plantId||(plantCard.dataset.plantId=String(++plantCardSequence));
+  let box=document.querySelector('.landcard[data-for-plant="'+plantId+'"]');
+  if(!box){box=document.createElement('div');box.className='landcard';box.dataset.forPlant=plantId;plantCard.after(box);}
+  const land=activeLand();
+  const landKey=land?land.country_code+'|'+(land.city||'')+'|'+(land.region||'')+'|'+(observationLand?'observation':'home'):'none';
+  if(!force&&box.dataset.landKey===landKey&&(box.dataset.state==='loading'||box.dataset.state==='loaded')) return;
+  box.dataset.landKey=landKey;
+  box.dataset.state='loading';
+  const requestGeneration=regionalGeneration;
+  if(!land){
+    box.innerHTML='<h3>🌍 Relationship to land</h3><div class="ctx">Choose a land to check regional occurrence, origin, invasive, conservation, seasonal and legal context.</div><button class="land-action" onclick="openLandDialog()">📍 Choose land</button>';
+    box.dataset.state='loaded';
+    return;
+  }
+  box.innerHTML='<h3>📍 '+escapeHtml(land.label)+'</h3><div class="ctx">🌿 Reading regional evidence…</div>';
+  try{
+    const r=await fetch('/regional-context',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scientific_name:sci,home:projectLand(homeLand),observation:projectLand(observationLand)})});
+    const d=await r.json();
+    if(requestGeneration!==regionalGeneration||!box.isConnected||box.dataset.landKey!==landKey) return;
+    if(!r.ok||!d.regional) throw new Error('context');
+    const g=d.global||{}, x=d.regional||{}, seasonal=x.seasonal_evidence||{};
+    const monthNames=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const months=(seasonal.months||[]).map(n=>monthNames[Number(n)]||'').filter(Boolean).join(', ')||(x.presence==='source unavailable'?'source unavailable':'none in connected records');
+    const links=(d.sources||[]).map(s=>{const u=safeUrl(s.url);return u?'<a href="'+escapeHtml(u)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(s.name)+' ↗</a>':'';}).join('');
+    const taxonomy=g.verified_taxonomy
+      ? '<b>🧬 Global taxonomy — exact GBIF match:</b> '+escapeHtml(g.accepted_name||sci)+(g.family?' · '+escapeHtml(g.family):'')
+      : '<b>🧬 Botanical name submitted:</b> '+escapeHtml(sci)+' · exact species-level GBIF match unavailable';
+    const records=Number.isInteger(x.occurrence_records)?' ('+x.occurrence_records+' GBIF records)':' (record count unavailable)';
+    box.innerHTML=
+      '<h3>📍 '+escapeHtml(d.land.label)+(d.land.source==='observation'?' · this observation':' · home land')+'</h3>'+
+      '<div class="ctx">'+taxonomy+'</div>'+
+      '<div class="ctx"><b>📍 Regional evidence:</b> '+escapeHtml(x.presence||'unverified')+records+'. Establishment: '+escapeHtml(x.establishment||'unverified')+'.</div>'+
+      '<div class="ctx"><b>🌱 Local risk:</b> invasive '+escapeHtml(x.invasive_status||'unverified')+' · conservation '+escapeHtml(x.conservation_status||'unverified')+' · legal '+escapeHtml(x.legal_status||'unverified')+'.</div>'+
+      '<div class="ctx"><b>🗓 Observation months:</b> '+escapeHtml(months)+'. This is occurrence activity, not flowering proof.</div>'+
+      '<div class="ctx"><b>📜 Cultural context:</b> '+escapeHtml((d.cultural||{}).ownership_rule||'Traditions remain attributed to their source communities.')+'</div>'+
+      '<div class="ctx"><b>⚠️ Local lookalikes:</b> not verified by the connected occurrence dataset; use a regional botanical key or living local expert.</div>'+
+      '<div class="evidence-note">A record proves that someone documented the taxon in the selected country—not that it is native, safe, legal to harvest, or correctly identified in your photograph. “Unverified” is deliberate. '+links+'</div>';
+    box.dataset.state='loaded';
+  }catch(e){
+    if(requestGeneration!==regionalGeneration||!box.isConnected||box.dataset.landKey!==landKey) return;
+    box.innerHTML='<h3>📍 '+escapeHtml(land.label)+'</h3><div class="ctx">Regional evidence could not be reached. Botanical identity does not change; native, invasive, legal and seasonal status remain unverified.</div>';
+    box.dataset.state='loaded';
+  }
+  chat.scrollTop=chat.scrollHeight;
+}
+
 async function showPlant(sci, com, know, afterEl){
   const card=document.createElement('div');
   card.className='plantcard';
+  card.dataset.sci=sci;
   card.innerHTML='<div class="ploading">🌿 finding a picture of '+escapeHtml(com||sci)+'…</div>';
   afterEl.after(card);
   chat.scrollTop=chat.scrollHeight;
@@ -239,6 +434,7 @@ async function showPlant(sci, com, know, afterEl){
       '<div class="pnone">🌿 The picture would not come, child. Seek this leaf from an elder\'s hands.</div>'+
       knowBlock;
   }
+  await showRegionalContext(sci,card);
   chat.scrollTop=chat.scrollHeight;
 }
 // escapes quotes too — this output lands inside alt="…" and href="…" attributes,
@@ -335,6 +531,9 @@ async function send(){
 
 // Asking is split out from the input box so a failed question can be retried
 // with one tap — on a weak connection the forest often has to be asked twice.
+function needsLandContext(text){
+  return /\b(here|local|nearby|near me|my area|where i live|region|country|native|indigenous|introduced|naturalized|naturalised|invasive|protected|legal|law|conservation|season|seasonal|flower|flowering|harvest|wild|climate|grows? in|growing in|found in|occurs? in|occurring in)\b/i.test(text);
+}
 async function ask(text){
   document.getElementById('starters').style.display='none';
   document.getElementById('freshBtn').style.display='inline-block';
@@ -348,8 +547,9 @@ async function ask(text){
   chat.appendChild(typing); chat.scrollTop=chat.scrollHeight;
 
   try{
+    const includeLand=needsLandContext(text);
     const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:history})});
+      body:JSON.stringify({messages:history,home:includeLand?projectLand(homeLand):null,observation:includeLand?projectLand(observationLand):null})});
     const data=await r.json();
     typing.remove();
     const reply=data.text||"The forest is quiet, child. Ask again.";

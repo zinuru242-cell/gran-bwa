@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 import base64
+import json
 
 import gran_bwa
 
@@ -13,8 +14,8 @@ client = TestClient(app)
 def test_live_shell_exposes_upgrade_marker_and_disables_stale_html_cache():
     response = client.get('/')
     assert response.status_code == 200
-    assert 'CAMERA VISION · LIVE' in response.text
-    assert 'v2.2' in response.text
+    assert 'LAND CONTEXT · LIVE' in response.text
+    assert 'v2.3' in response.text
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
 
 
@@ -22,8 +23,11 @@ def test_service_worker_is_always_revalidated():
     response = client.get('/sw.js')
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
-    assert "granbwa-v6" in response.text
+    assert "granbwa-v7" in response.text
     assert "/identify-plant" in response.text
+    assert "/location-search" in response.text
+    assert "/resolve-location" in response.text
+    assert "/regional-context" in response.text
 
 
 def test_mobile_shell_has_camera_capture_and_photo_identification_flow():
@@ -79,6 +83,31 @@ def test_fenced_vision_json_is_parsed_without_model_prose():
     vote = gran_bwa.parse_vision_vote(raw)
     assert vote['scientific_name'] == 'Aloe vera'
     assert vote['visible_traits'] == ['toothed leaves']
+
+
+def test_malformed_vision_vote_is_rejected_without_crashing_endpoint(monkeypatch):
+    malformed = {
+        'identified': 'false', 'scientific_name': 'Aloe vera',
+        'common_name': 'Aloe vera', 'confidence': 'high',
+        'visible_traits': 7, 'lookalikes': {'bad': 'shape'},
+    }
+    assert gran_bwa.parse_vision_vote(json.dumps(malformed)) is None
+    assert gran_bwa.normalize_vision_vote({
+        'identified': True, 'scientific_name': 'Aloe vera',
+        'common_name': 'Aloe vera', 'confidence': [],
+        'visible_traits': [], 'lookalikes': [],
+    }) is None
+    assert gran_bwa.build_photo_consensus([malformed])['identified'] is False
+
+    async def fake_analysis(raw, mime):
+        return [malformed], ['malformed-reader']
+
+    monkeypatch.setattr(gran_bwa, 'analyze_plant_photo', fake_analysis)
+    raw = b'\x89PNG\r\n\x1a\n' + b'transient-malformed-vote'
+    image = 'data:image/png;base64,' + base64.b64encode(raw).decode()
+    response = client.post('/identify-plant', json={'image': image})
+    assert response.status_code == 200
+    assert response.json()['identified'] is False
 
 
 def test_photo_endpoint_returns_consensus_from_transient_image(monkeypatch):
@@ -150,6 +179,12 @@ def test_danger_sign_overrides_ailment_discovery_and_names_no_plant():
     assert body['brain'] == 'hard-safety-gate'
     assert 'doctor' in text or 'emergency' in text
     assert '[plant:' not in text
+
+
+def test_trailing_emergency_survives_chat_history_truncation():
+    body = ask(('ordinary gardening notes ' * 250) + " my baby won't wake")
+    assert body['brain'] == 'hard-safety-gate'
+    assert '[PLANT:' not in body['text']
 
 
 def test_chest_pain_never_falls_into_unknown_condition_education():
