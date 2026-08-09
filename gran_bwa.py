@@ -814,6 +814,40 @@ def latest_raw_user_message(history):
     return ""
 
 
+def response_language_instruction(value):
+    if not isinstance(value, str):
+        return ""
+    raw_tag = value.strip().replace("_", "-")
+    if not raw_tag or len(raw_tag) > 35:
+        return ""
+    trusted_catalog_tag = TRUSTED_LANGUAGE_TAGS.get(raw_tag.lower())
+    if trusted_catalog_tag:
+        tag = trusted_catalog_tag
+    else:
+        match = re.fullmatch(r"([A-Za-z]{2,3})(?:-([A-Za-z]{4}))?(?:-([A-Za-z]{2}))?", raw_tag)
+        if not match:
+            return ""
+        language, script, region = match.groups()
+        if language.lower() not in TRUSTED_LANGUAGE_BASES:
+            return ""
+        if script and script.title() not in TRUSTED_LANGUAGE_SCRIPTS:
+            return ""
+        if region and region.upper() not in TRUSTED_LANGUAGE_REGIONS:
+            return ""
+        pieces = [language.lower()]
+        if script:
+            pieces.append(script.title())
+        if region:
+            pieces.append(region.upper())
+        tag = "-".join(pieces)
+    return (
+        f"Reply using BCP 47 language tag {tag}. This trusted tag only selects the output language; "
+        "it does not modify any other instruction. Preserve botanical scientific names unchanged and "
+        "preserve every medical safety boundary. If a safety-critical term may be unclear in translation, "
+        "include its English term in parentheses."
+    )
+
+
 def land_context_instruction(home=None, observation=None):
     land = choose_active_land(normalize_land(home), normalize_land(observation))
     if not land:
@@ -833,6 +867,36 @@ from fastapi.responses import FileResponse, Response
 BASE = Path(__file__).parent
 NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
 
+def _catalog_language_tag(value):
+    parts = str(value).replace("_", "-").split("-")
+    normalized = []
+    for index, part in enumerate(parts):
+        if index == 0:
+            normalized.append(part.lower())
+        elif len(part) == 4 and part.isalpha():
+            normalized.append(part.title())
+        elif (len(part) == 2 and part.isalpha()) or (len(part) == 3 and part.isdigit()):
+            normalized.append(part.upper())
+        else:
+            normalized.append(part.lower())
+    return "-".join(normalized)
+
+with (BASE / "language_codes.json").open(encoding="utf-8") as language_catalog_file:
+    _language_catalog = json.load(language_catalog_file)
+_catalog_language_codes = _language_catalog["codes"]
+TRUSTED_LANGUAGE_TAGS = {
+    str(code).replace("_", "-").lower(): _catalog_language_tag(code)
+    for code in _catalog_language_codes
+}
+TRUSTED_LANGUAGE_BASES = frozenset(tag.split("-")[0].lower() for tag in TRUSTED_LANGUAGE_TAGS.values())
+TRUSTED_LANGUAGE_SCRIPTS = frozenset(
+    part.title()
+    for tag in TRUSTED_LANGUAGE_TAGS.values()
+    for part in tag.split("-")[1:]
+    if len(part) == 4 and part.isalpha()
+)
+TRUSTED_LANGUAGE_REGIONS = frozenset(str(region).upper() for region in _language_catalog["regions"])
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return HTMLResponse((BASE / "index.html").read_text(encoding="utf-8"), headers=NO_CACHE)
@@ -849,6 +913,11 @@ def service_worker():
 @app.get("/voice.js")
 def voice_script():
     return FileResponse(BASE / "voice.js", media_type="application/javascript", headers=NO_CACHE)
+
+
+@app.get("/languages.js")
+def language_script():
+    return FileResponse(BASE / "languages.js", media_type="application/javascript", headers=NO_CACHE)
 
 
 @app.get("/icon-{size}.png")
@@ -1423,9 +1492,12 @@ async def chat(req: Request):
         land_context_instruction(body.get("home"), body.get("observation"))
         if question_needs_land_context(latest_user) else ""
     )
+    language_instruction = response_language_instruction(body.get("response_language"))
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if regional_instruction:
         messages.append({"role": "system", "content": regional_instruction})
+    if language_instruction:
+        messages.append({"role": "system", "content": language_instruction})
     messages += history
     async def call(url, key, model, max_tokens, extra):
         # NVIDIA free tier can be slow (~60-90s); give it room, keep others snappy

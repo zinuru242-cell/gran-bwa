@@ -202,13 +202,6 @@
         <label class="voice-language" for="voiceLanguage">🗣 Voice
           <select id="voiceLanguage" aria-label="Voice language">
             <option value="">Device language</option>
-            <option value="en-ZA">English · South Africa</option>
-            <option value="xh-ZA">isiXhosa</option>
-            <option value="zu-ZA">isiZulu</option>
-            <option value="af-ZA">Afrikaans</option>
-            <option value="tw-GH">Twi</option>
-            <option value="fr-FR">Français</option>
-            <option value="ht-HT">Kreyòl ayisyen</option>
           </select>
         </label>
         <button id="voiceToggle" class="voice-tool active" onclick="toggleVoiceReplies()" aria-pressed="true">🔊 Replies on</button>
@@ -216,7 +209,7 @@
         <button id="stopVoiceBtn" class="voice-tool" onclick="stopVoiceReply()" style="display:none">⏹ Stop</button>
       </div>
       <span id="voiceStatus" class="voice-status" role="status" aria-live="polite">Tap the microphone and speak, or type below.</span>
-      <span class="voice-privacy">🔒 Gran Bwa does not store your recording. Your phone or browser may send audio to its speech provider under that provider's own retention policy. The transcript is sent through Gran Bwa's existing AI chat and saved in conversation history on this device until you choose New talk.</span>
+      <span class="voice-privacy">🌍 Global language list: languages spoken in 258 countries and territories, plus voices installed on this device. Speech availability depends on the voices installed on this device. 🔒 Gran Bwa does not store your recording. Your phone or browser may send audio to its speech provider under that provider's own retention policy. The transcript is sent through Gran Bwa's existing AI chat and saved in conversation history on this device until you choose New talk.</span>
     </div>
     <div class="photo-note">📷 Photo identification is a hypothesis, not proof. Never taste a plant to identify it.</div>
     <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="identifyPhoto(this.files[0]);this.value=''">
@@ -228,6 +221,7 @@
     </div>
   </footer>
 
+<script src="/languages.js?v=1"></script>
 <script src="/voice.js?v=1"></script>
 <script>
 const chat=document.getElementById('chat');
@@ -245,13 +239,21 @@ let lastVoiceReply='';
 const VOICE_ENABLED_KEY='granbwa-voice-replies-v1';
 const VOICE_LANGUAGE_KEY='granbwa-voice-language-v1';
 let voiceRepliesEnabled=true;
+let savedVoiceLanguage='';
 try{
   voiceRepliesEnabled=localStorage.getItem(VOICE_ENABLED_KEY)!=='0';
-  const savedLanguage=localStorage.getItem(VOICE_LANGUAGE_KEY)||'';
-  if([...voiceLanguage.options].some(option=>option.value===savedLanguage)) voiceLanguage.value=savedLanguage;
+  savedVoiceLanguage=localStorage.getItem(VOICE_LANGUAGE_KEY)||'';
 }catch(e){}
 
 function selectedVoiceLanguage(){ return voiceLanguage.value||navigator.language||'en-US'; }
+function selectedVoiceLanguageName(){
+  const tag=selectedVoiceLanguage();
+  const option=voiceLanguage.options[voiceLanguage.selectedIndex];
+  let name=option&&option.dataset.languageName||'';
+  try{if(!name)name=new Intl.DisplayNames(['en'],{type:'language',fallback:'code'}).of(tag)||'';}catch(e){}
+  if(!name) name=option?option.textContent.split(' — ')[0].split(' · ')[0]:tag;
+  return Array.from(name).filter(char=>/\p{L}/u.test(char)||" -'’(),·".includes(char)).join('').slice(0,80);
+}
 function showVoiceState(state){
   const listening=state==='listening';
   micBtn.classList.toggle('listening',listening);
@@ -350,6 +352,7 @@ function stopVoiceActivity(){
   voiceController.stopSpeaking();
 }
 voiceLanguage.addEventListener('change',()=>{
+  savedVoiceLanguage=voiceLanguage.value;
   try{localStorage.setItem(VOICE_LANGUAGE_KEY,voiceLanguage.value);}catch(e){}
   if(voiceController){voiceController.stopListening();voiceController.stopSpeaking();}
   showVoiceStatus('Voice language changed. Tap the microphone when ready.');
@@ -364,6 +367,39 @@ let landMode='home';
 let landResults=[];
 let landOperationGeneration=0;
 let searchGeneration=0;
+
+function activeVoiceCountryCode(){
+  const land=observationLand||homeLand;
+  return land&&land.country_code?String(land.country_code).toUpperCase():'';
+}
+function populateVoiceLanguages(){
+  const catalog=window.GranBwaLanguages;
+  if(!catalog) return;
+  const previous=voiceLanguage.value||savedVoiceLanguage;
+  let voices=[];
+  try{voices=window.speechSynthesis?window.speechSynthesis.getVoices()||[]:[];}catch(e){}
+  const options=catalog.buildLanguageOptions({countryCode:activeVoiceCountryCode(),voices,displayLocale:navigator.language||'en'});
+  if(previous&&!options.some(option=>option.value===previous)){
+    let label=previous;
+    try{label=new Intl.DisplayNames([navigator.language||'en'],{type:'language',fallback:'code'}).of(previous)||previous;}catch(e){}
+    options.splice(1,0,{value:previous,label,group:'Your saved choice'});
+  }
+  voiceLanguage.textContent='';
+  const groups=new Map();
+  for(const item of options){
+    const option=document.createElement('option');
+    option.value=item.value;
+    option.textContent=item.label;
+    option.dataset.languageName=item.languageName||'';
+    if(item.group==='Device') voiceLanguage.appendChild(option);
+    else{
+      let group=groups.get(item.group);
+      if(!group){group=document.createElement('optgroup');group.label=item.group;groups.set(item.group,group);voiceLanguage.appendChild(group);}
+      group.appendChild(option);
+    }
+  }
+  if([...voiceLanguage.options].some(option=>option.value===previous)) voiceLanguage.value=previous;
+}
 let regionalGeneration=0;
 let plantCardSequence=0;
 
@@ -377,7 +413,7 @@ function projectLand(value){
     const text=String(value[key]||'').replace(/\s+/g,' ').trim().slice(0,80);
     if(text) land[key]=text;
   }
-  land.label=[land.city,land.region,land.country].filter((v,i,a)=>v&&a.findIndex(x=>x.toLowerCase()===v.toLowerCase())===i).join(', ');
+  land.label=[land.city,land.region,land.country].filter(Boolean).filter((v,i,a)=>a.findIndex(x=>x.toLowerCase()===v.toLowerCase())===i).join(', ');
   return land;
 }
 function readLand(storage,key){
@@ -410,7 +446,7 @@ function saveSelectedLand(value,targetMode=landMode){
   }else{
     homeLand=land; try{localStorage.setItem(HOME_LAND_KEY,JSON.stringify(land));}catch(e){}
   }
-  updateLandUI(); closeLandDialog(); refreshRegionalCards();
+  updateLandUI(); populateVoiceLanguages(); closeLandDialog(); refreshRegionalCards();
 }
 async function searchLands(){
   const q=document.getElementById('landSearch').value.trim();
@@ -450,15 +486,19 @@ function continueWithoutLocation(){
   landOperationGeneration++; searchGeneration++;
   if(landMode==='observation'){observationLand=null;try{sessionStorage.removeItem(OBSERVATION_LAND_KEY);}catch(e){}}
   else{homeLand=null;try{localStorage.removeItem(HOME_LAND_KEY);}catch(e){}}
-  updateLandUI();closeLandDialog();refreshRegionalCards();
+  updateLandUI();populateVoiceLanguages();closeLandDialog();refreshRegionalCards();
 }
 function forgetAllLand(){
   landOperationGeneration++; searchGeneration++;
   homeLand=null;observationLand=null;
   try{localStorage.removeItem(HOME_LAND_KEY);sessionStorage.removeItem(OBSERVATION_LAND_KEY);}catch(e){}
-  updateLandUI();closeLandDialog();refreshRegionalCards();
+  updateLandUI();populateVoiceLanguages();closeLandDialog();refreshRegionalCards();
 }
 updateLandUI();
+populateVoiceLanguages();
+if(window.speechSynthesis&&typeof window.speechSynthesis.addEventListener==='function'){
+  window.speechSynthesis.addEventListener('voiceschanged',populateVoiceLanguages);
+}
 
 function addMsg(text, who){
   const d=document.createElement('div');
@@ -710,7 +750,7 @@ async function ask(text){
   try{
     const includeLand=needsLandContext(text);
     const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},signal:operation.controller.signal,
-      body:JSON.stringify({messages:history,home:includeLand?projectLand(homeLand):null,observation:includeLand?projectLand(observationLand):null})});
+      body:JSON.stringify({messages:history,response_language:selectedVoiceLanguage(),home:includeLand?projectLand(homeLand):null,observation:includeLand?projectLand(observationLand):null})});
     const data=await r.json();
     if(!requestCoordinator.current(operation)) return;
     typing.remove();
