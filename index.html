@@ -91,6 +91,18 @@
     color:#0a1207;flex-shrink:0;
   }
   .photo-note{color:var(--dim);font-size:10px;line-height:1.35;margin:0 2px 8px;text-align:center}
+  .voice-panel{margin:0 0 9px;padding:9px 10px;border:1px solid rgba(126,168,106,.28);border-radius:12px;background:rgba(26,42,23,.42)}
+  .voice-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .voice-language{display:flex;align-items:center;gap:6px;color:var(--leaf);font-size:11px;flex:1;min-width:145px}
+  .voice-language select{min-height:44px;min-width:0;max-width:165px;background:#11180e;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:7px;font:12px Georgia,serif}
+  .voice-tool{width:auto;min-width:44px;height:44px;border-radius:22px;padding:0 12px;font-size:11px;background:rgba(126,168,106,.2);color:var(--ink);border:1px solid var(--line)}
+  .voice-tool.active{background:linear-gradient(180deg,var(--gold),var(--gd));color:#0a1207}
+  .voice-status{display:block;color:var(--gb);font-size:11px;line-height:1.35;margin-top:7px}
+  .voice-privacy{display:block;color:var(--dim);font-size:9.5px;line-height:1.35;margin-top:4px}
+  .mic{width:52px;height:52px;font-size:22px;background:linear-gradient(180deg,#8fbd76,#3a5a34);color:#071006;flex-shrink:0}
+  .mic.listening{background:linear-gradient(180deg,#f0c75e,#a33428);animation:pulseMic 1s ease-in-out infinite;color:#160604}
+  @keyframes pulseMic{0%,100%{box-shadow:0 0 0 0 rgba(212,175,55,.25)}50%{box-shadow:0 0 0 9px rgba(212,175,55,0)}}
+  @media (prefers-reduced-motion:reduce){.mic.listening{animation:none}}
   .photo-msg{align-self:flex-end;max-width:72%;padding:6px;border-radius:14px 14px 4px 14px;border:1px solid rgba(212,175,55,.35);background:rgba(90,70,20,.3)}
   .photo-msg img{display:block;width:100%;max-height:270px;object-fit:contain;border-radius:9px;background:#080a06}
   textarea{
@@ -145,7 +157,7 @@
     <div class="sigil">🜁 &nbsp; 🌿 &nbsp; 🜃</div>
     <h1>GRAN BWA</h1>
     <div class="role">Grand Bois · Keeper of the Forest</div>
-    <div class="version" title="Global home and observation land context is active">v2.3 · LAND CONTEXT · LIVE</div>
+    <div class="version" title="Voice conversation and global land context are active">v2.4 · VOICE & LAND · LIVE</div>
     <button id="landBadge" class="land-badge" onclick="openLandDialog()">📍 Choose land</button>
     <button id="installBtn" class="hbtn" onclick="installApp()" style="display:none">📲 Install</button>
     <button id="freshBtn" class="hbtn" onclick="clearHistory()" style="display:none">🌱 New talk</button>
@@ -185,21 +197,164 @@
       <div class="chip" onclick="starter(this)">A plant for wounds?</div>
       <div class="chip" onclick="starter(this)">What is dangerous to eat?</div>
     </div>
+    <div class="voice-panel">
+      <div class="voice-controls">
+        <label class="voice-language" for="voiceLanguage">🗣 Voice
+          <select id="voiceLanguage" aria-label="Voice language">
+            <option value="">Device language</option>
+            <option value="en-ZA">English · South Africa</option>
+            <option value="xh-ZA">isiXhosa</option>
+            <option value="zu-ZA">isiZulu</option>
+            <option value="af-ZA">Afrikaans</option>
+            <option value="tw-GH">Twi</option>
+            <option value="fr-FR">Français</option>
+            <option value="ht-HT">Kreyòl ayisyen</option>
+          </select>
+        </label>
+        <button id="voiceToggle" class="voice-tool active" onclick="toggleVoiceReplies()" aria-pressed="true">🔊 Replies on</button>
+        <button id="replayBtn" class="voice-tool" onclick="replayLastReply()" style="display:none">↻ Replay</button>
+        <button id="stopVoiceBtn" class="voice-tool" onclick="stopVoiceReply()" style="display:none">⏹ Stop</button>
+      </div>
+      <span id="voiceStatus" class="voice-status" role="status" aria-live="polite">Tap the microphone and speak, or type below.</span>
+      <span class="voice-privacy">🔒 Gran Bwa does not store your recording. Your phone or browser may send audio to its speech provider under that provider's own retention policy. The transcript is sent through Gran Bwa's existing AI chat and saved in conversation history on this device until you choose New talk.</span>
+    </div>
     <div class="photo-note">📷 Photo identification is a hypothesis, not proof. Never taste a plant to identify it.</div>
     <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="identifyPhoto(this.files[0]);this.value=''">
     <div class="inrow">
       <button id="cameraBtn" class="camera" onclick="document.getElementById('photoInput').click()" aria-label="Photograph a plant" title="Photograph a plant">📷</button>
-      <textarea id="input" rows="1" placeholder="Ask Gran Bwa about a plant or ailment…" autocomplete="off"></textarea>
-      <button id="send" onclick="send()">➤</button>
+      <button id="micBtn" class="mic" onclick="toggleMicrophone()" aria-label="Speak to Gran Bwa" aria-pressed="false" title="Speak to Gran Bwa">🎙️</button>
+      <textarea id="input" rows="1" placeholder="Speak or ask Gran Bwa about a plant or ailment…" autocomplete="off"></textarea>
+      <button id="send" onclick="send()" aria-label="Send question">➤</button>
     </div>
   </footer>
 
+<script src="/voice.js?v=1"></script>
 <script>
 const chat=document.getElementById('chat');
 const input=document.getElementById('input');
 const sendBtn=document.getElementById('send');
 const cameraBtn=document.getElementById('cameraBtn');
+const micBtn=document.getElementById('micBtn');
+const voiceStatus=document.getElementById('voiceStatus');
+const voiceLanguage=document.getElementById('voiceLanguage');
+const voiceToggle=document.getElementById('voiceToggle');
+const replayBtn=document.getElementById('replayBtn');
+const stopVoiceBtn=document.getElementById('stopVoiceBtn');
 let history=[];
+let lastVoiceReply='';
+const VOICE_ENABLED_KEY='granbwa-voice-replies-v1';
+const VOICE_LANGUAGE_KEY='granbwa-voice-language-v1';
+let voiceRepliesEnabled=true;
+try{
+  voiceRepliesEnabled=localStorage.getItem(VOICE_ENABLED_KEY)!=='0';
+  const savedLanguage=localStorage.getItem(VOICE_LANGUAGE_KEY)||'';
+  if([...voiceLanguage.options].some(option=>option.value===savedLanguage)) voiceLanguage.value=savedLanguage;
+}catch(e){}
+
+function selectedVoiceLanguage(){ return voiceLanguage.value||navigator.language||'en-US'; }
+function showVoiceState(state){
+  const listening=state==='listening';
+  micBtn.classList.toggle('listening',listening);
+  micBtn.setAttribute('aria-pressed',String(listening));
+  micBtn.setAttribute('aria-label',listening?'Stop listening':'Speak to Gran Bwa');
+  micBtn.title=listening?'Stop listening':'Speak to Gran Bwa';
+  micBtn.textContent=listening?'⏹':'🎙️';
+  stopVoiceBtn.style.display=state==='speaking'?'inline-block':'none';
+}
+function showVoiceStatus(text){ voiceStatus.textContent=text; }
+
+const voiceFactory=window.GranBwaVoice&&window.GranBwaVoice.createVoiceController;
+const voiceController=voiceFactory?voiceFactory({
+  Recognition:window.SpeechRecognition||window.webkitSpeechRecognition||null,
+  speechSynthesis:window.speechSynthesis||null,
+  Utterance:window.SpeechSynthesisUtterance||null,
+  getLanguage:selectedVoiceLanguage,
+  onTranscript:text=>ask(text),
+  onState:showVoiceState,
+  onStatus:showVoiceStatus,
+}):null;
+const coordinatorFactory=window.GranBwaVoice&&window.GranBwaVoice.createRequestCoordinator;
+const requestCoordinator=coordinatorFactory?coordinatorFactory(window.AbortController):(function(){
+  let generation=0,active=null,greeting=null;
+  const make=kind=>({kind,generation,controller:window.AbortController?new AbortController():{signal:undefined,abort(){}}});
+  const abort=value=>{if(value)try{value.controller.abort();}catch(e){}};
+  const current=value=>!!(value&&value.generation===generation&&!(value.controller.signal&&value.controller.signal.aborted)&&(value.kind==='greeting'?greeting===value:active===value));
+  return {
+    begin(kind){if(active)return null;abort(greeting);greeting=null;return active=make(kind);},
+    beginGreeting(){if(active)return null;abort(greeting);return greeting=make('greeting');},
+    current,
+    finish(value){if(!current(value))return false;if(value.kind==='greeting')greeting=null;else active=null;return true;},
+    clear(){generation++;abort(active);abort(greeting);active=null;greeting=null;},
+    isBusy(){return !!active;},
+  };
+})();
+const photoInput=document.getElementById('photoInput');
+
+function operationBusy(){return !!(requestCoordinator&&requestCoordinator.isBusy());}
+function updateInteractionControls(){
+  const busy=operationBusy();
+  cameraBtn.disabled=busy;
+  sendBtn.disabled=busy;
+  input.disabled=busy;
+  photoInput.disabled=busy;
+  voiceLanguage.disabled=busy;
+  updateVoiceControls();
+}
+function beginOperation(kind){
+  if(!requestCoordinator){showVoiceStatus('The page did not finish loading. Refresh and try again.');return null;}
+  const operation=requestCoordinator.begin(kind);
+  if(!operation){showVoiceStatus('Gran Bwa is still answering. Wait for that reply or choose New talk.');return null;}
+  stopVoiceActivity();
+  updateInteractionControls();
+  return operation;
+}
+function finishOperation(operation){
+  const finished=!!(requestCoordinator&&requestCoordinator.finish(operation));
+  if(finished) updateInteractionControls();
+  return finished;
+}
+
+function updateVoiceControls(){
+  const canListen=!!(voiceController&&voiceController.isRecognitionSupported());
+  const canSpeak=!!(voiceController&&voiceController.isSpeechSupported());
+  micBtn.disabled=!canListen||operationBusy();
+  voiceToggle.disabled=!canSpeak;
+  voiceToggle.classList.toggle('active',voiceRepliesEnabled&&canSpeak);
+  voiceToggle.setAttribute('aria-pressed',String(voiceRepliesEnabled&&canSpeak));
+  voiceToggle.textContent=voiceRepliesEnabled&&canSpeak?'🔊 Replies on':'🔇 Replies off';
+  if(voiceController) voiceController.setEnabled(voiceRepliesEnabled&&canSpeak);
+  if(!canListen&&!canSpeak) showVoiceStatus('Voice is not available in this browser. You can still type below.');
+  else if(!canListen) showVoiceStatus('This browser can read replies aloud, but microphone listening is unavailable.');
+}
+function toggleMicrophone(){
+  if(!voiceController) return showVoiceStatus('Voice is not available. You can still type below.');
+  if(voiceController.isListening()) voiceController.stopListening();
+  else voiceController.startListening();
+}
+function toggleVoiceReplies(){
+  voiceRepliesEnabled=!voiceRepliesEnabled;
+  try{localStorage.setItem(VOICE_ENABLED_KEY,voiceRepliesEnabled?'1':'0');}catch(e){}
+  updateVoiceControls();
+  showVoiceStatus(voiceRepliesEnabled?'Gran Bwa will read new replies aloud.':'Spoken replies are off. Text remains on screen.');
+}
+function replayLastReply(){
+  if(lastVoiceReply&&voiceController) voiceController.speak(lastVoiceReply);
+}
+function stopVoiceReply(){
+  if(voiceController) voiceController.stopSpeaking();
+  showVoiceStatus('Spoken reply stopped.');
+}
+function stopVoiceActivity(){
+  if(!voiceController) return;
+  voiceController.stopListening();
+  voiceController.stopSpeaking();
+}
+voiceLanguage.addEventListener('change',()=>{
+  try{localStorage.setItem(VOICE_LANGUAGE_KEY,voiceLanguage.value);}catch(e){}
+  if(voiceController){voiceController.stopListening();voiceController.stopSpeaking();}
+  showVoiceStatus('Voice language changed. Tap the microphone when ready.');
+});
+updateVoiceControls();
 
 const HOME_LAND_KEY='granbwa-home-land-v1';
 const OBSERVATION_LAND_KEY='granbwa-observation-land-v1';
@@ -495,36 +650,41 @@ function addPhotoMsg(dataUrl){
 
 async function identifyPhoto(file){
   if(!file) return;
+  const operation=beginOperation('photo');
+  if(!operation) return;
   document.getElementById('starters').style.display='none';
   document.getElementById('freshBtn').style.display='inline-block';
-  cameraBtn.disabled=true; sendBtn.disabled=true;
-  let dataUrl;
+  let dataUrl='';
+  let typing=null;
   try{
     dataUrl=await resizePhoto(file);
+    if(!requestCoordinator.current(operation)) return;
     addPhotoMsg(dataUrl);
-  }catch(e){
-    addMsg(e.message==='too-large'?'That photograph is too large, child. Choose a smaller image.':'I could not read that photograph. Try a clear JPG, PNG, or WebP image.','bwa');
-    cameraBtn.disabled=false; sendBtn.disabled=false; return;
-  }
-  const typing=document.createElement('div');
-  typing.className='typing';
-  typing.innerHTML='<span class="leaf">🌿</span> Gran Bwa compares leaf, stem, flower, and form…';
-  chat.appendChild(typing); chat.scrollTop=chat.scrollHeight;
-  try{
-    const r=await fetch('/identify-plant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:dataUrl})});
+    typing=document.createElement('div');
+    typing.className='typing';
+    typing.innerHTML='<span class="leaf">🌿</span> Gran Bwa compares leaf, stem, flower, and form…';
+    chat.appendChild(typing); chat.scrollTop=chat.scrollHeight;
+    const r=await fetch('/identify-plant',{method:'POST',headers:{'Content-Type':'application/json'},signal:operation.controller.signal,body:JSON.stringify({image:dataUrl})});
     const data=await r.json();
+    if(!requestCoordinator.current(operation)) return;
     typing.remove();
     addMsg(data.text||data.detail||'The photograph did not reveal enough, child. Try the whole plant, both sides of a leaf, stem, and flower.','bwa');
   }catch(e){
-    typing.remove();
-    addMsg('The forest could not study that photograph on this connection. Try once more.','bwa');
+    if(!requestCoordinator.current(operation)) return;
+    if(typing&&typing.isConnected) typing.remove();
+    const message=!dataUrl
+      ? (e.message==='too-large'?'That photograph is too large, child. Choose a smaller image.':'I could not read that photograph. Try a clear JPG, PNG, or WebP image.')
+      : 'The forest could not study that photograph on this connection. Try once more.';
+    addMsg(message,'bwa');
+  }finally{
+    finishOperation(operation);
   }
-  cameraBtn.disabled=false; sendBtn.disabled=false;
 }
 
 async function send(){
   const text=input.value.trim();
   if(!text) return;
+  if(operationBusy()){showVoiceStatus('Gran Bwa is still answering. Wait or choose New talk.');return;}
   input.value=''; input.style.height='auto';
   await ask(text);
 }
@@ -535,11 +695,12 @@ function needsLandContext(text){
   return /\b(here|local|nearby|near me|my area|where i live|region|country|native|indigenous|introduced|naturalized|naturalised|invasive|protected|legal|law|conservation|season|seasonal|flower|flowering|harvest|wild|climate|grows? in|growing in|found in|occurs? in|occurring in)\b/i.test(text);
 }
 async function ask(text){
+  const operation=beginOperation('chat');
+  if(!operation) return;
   document.getElementById('starters').style.display='none';
   document.getElementById('freshBtn').style.display='inline-block';
   addMsg(text,'me');
   history.push({role:'user',content:text});
-  sendBtn.disabled=true;
 
   const typing=document.createElement('div');
   typing.className='typing';
@@ -548,20 +709,26 @@ async function ask(text){
 
   try{
     const includeLand=needsLandContext(text);
-    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},signal:operation.controller.signal,
       body:JSON.stringify({messages:history,home:includeLand?projectLand(homeLand):null,observation:includeLand?projectLand(observationLand):null})});
     const data=await r.json();
+    if(!requestCoordinator.current(operation)) return;
     typing.remove();
     const reply=data.text||"The forest is quiet, child. Ask again.";
     addMsg(reply,'bwa');
+    lastVoiceReply=reply;
+    replayBtn.style.display='inline-block';
+    if(voiceController){try{voiceController.speak(reply);}catch(e){showVoiceStatus('The words are on screen, but this device could not speak them.');}}
     history.push({role:'assistant',content:reply});
     saveHistory();
   }catch(e){
-    typing.remove();
+    if(!requestCoordinator.current(operation)) return;
+    if(typing.isConnected) typing.remove();
     history.pop(); // drop the unanswered question so a retry does not ask it twice
     offerRetry(text);
+  }finally{
+    if(finishOperation(operation)) input.focus();
   }
-  sendBtn.disabled=false; input.focus();
 }
 
 function offerRetry(text){
@@ -601,14 +768,28 @@ function saveHistory(){
   try{ localStorage.setItem(STORE, JSON.stringify(history.slice(-30))); }catch(e){}
 }
 function clearHistory(){
+  if(requestCoordinator) requestCoordinator.clear();
+  updateInteractionControls();
+  stopVoiceActivity();
+  lastVoiceReply='';
+  replayBtn.style.display='none';
+  stopVoiceBtn.style.display='none';
+  showVoiceStatus('Conversation cleared. Tap the microphone and speak, or type below.');
   try{ localStorage.removeItem(STORE); }catch(e){}
   history=[]; chat.innerHTML='';
   document.getElementById('starters').style.display='flex';
   greet();
 }
 function greet(){
-  fetch('/greeting').then(r=>r.json()).then(d=>{ addMsg(d.text,'bwa'); history.push({role:'assistant',content:d.text}); })
-    .catch(()=>addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa'));
+  if(!requestCoordinator){addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa');return;}
+  const operation=requestCoordinator.beginGreeting();
+  if(!operation) return;
+  fetch('/greeting',{signal:operation.controller.signal}).then(r=>r.json()).then(d=>{
+    if(!requestCoordinator.current(operation)) return;
+    addMsg(d.text,'bwa'); history.push({role:'assistant',content:d.text});
+  }).catch(()=>{
+    if(requestCoordinator.current(operation)) addMsg("I am Gran Bwa, keeper of the forest. What ails the one you love, child?",'bwa');
+  }).finally(()=>requestCoordinator.finish(operation));
 }
 
 (function restore(){

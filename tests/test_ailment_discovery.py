@@ -14,8 +14,8 @@ client = TestClient(app)
 def test_live_shell_exposes_upgrade_marker_and_disables_stale_html_cache():
     response = client.get('/')
     assert response.status_code == 200
-    assert 'LAND CONTEXT · LIVE' in response.text
-    assert 'v2.3' in response.text
+    assert 'VOICE & LAND · LIVE' in response.text
+    assert 'v2.4' in response.text
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
 
 
@@ -23,7 +23,7 @@ def test_service_worker_is_always_revalidated():
     response = client.get('/sw.js')
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
-    assert "granbwa-v7" in response.text
+    assert "granbwa-v8" in response.text
     assert "/identify-plant" in response.text
     assert "/location-search" in response.text
     assert "/resolve-location" in response.text

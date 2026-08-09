@@ -845,6 +845,12 @@ def manifest():
 def service_worker():
     return FileResponse(BASE / "sw.js", media_type="application/javascript", headers=NO_CACHE)
 
+
+@app.get("/voice.js")
+def voice_script():
+    return FileResponse(BASE / "voice.js", media_type="application/javascript", headers=NO_CACHE)
+
+
 @app.get("/icon-{size}.png")
 def icon(size: str):
     p = BASE / f"icon-{size}.png"
