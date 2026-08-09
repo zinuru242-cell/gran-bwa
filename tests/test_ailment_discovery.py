@@ -6,6 +6,20 @@ from gran_bwa import app
 client = TestClient(app)
 
 
+def test_live_shell_exposes_upgrade_marker_and_disables_stale_html_cache():
+    response = client.get('/')
+    assert response.status_code == 200
+    assert 'ILLNESS EDUCATION · LIVE' in response.text
+    assert 'v2.1' in response.text
+    assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
+
+
+def test_service_worker_is_always_revalidated():
+    response = client.get('/sw.js')
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
+
+
 def ask(question: str) -> dict:
     response = client.post('/chat', json={'messages': [{'role': 'user', 'content': question}]})
     assert response.status_code == 200

@@ -282,10 +282,11 @@ app = FastAPI(title="Gran Bwa")
 
 from fastapi.responses import FileResponse, Response
 BASE = Path(__file__).parent
+NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (BASE / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse((BASE / "index.html").read_text(encoding="utf-8"), headers=NO_CACHE)
 
 @app.get("/manifest.webmanifest")
 def manifest():
@@ -293,7 +294,7 @@ def manifest():
 
 @app.get("/sw.js")
 def service_worker():
-    return FileResponse(BASE / "sw.js", media_type="application/javascript")
+    return FileResponse(BASE / "sw.js", media_type="application/javascript", headers=NO_CACHE)
 
 @app.get("/icon-{size}.png")
 def icon(size: str):
