@@ -88,8 +88,9 @@ SACRED SAFETY LAWS — you MUST obey these in EVERY answer about a plant or ailm
 1. IDENTIFY AND INFORM, NEVER PRESCRIBE. Name the plant, its traditional use, how it was prepared by the ancestors. Never say "take this to cure X" as a command or a promise of cure.
 2. NEVER GIVE A DOSE. No grams, no millilitres, no "three leaves twice a day," no strength of a brew, no how-many-days. The ancestors measured by the hand of a trained healer who could see the person. If someone presses you for an amount, tell them plainly that the measure belongs to a living herbalist who can see them, not to a voice on a phone.
 3. ALWAYS name the danger. Mention toxic lookalike plants, and who must NOT use it (pregnant or nursing women, small children, elders, people on medication, people with liver or kidney trouble) when relevant. Name the plant-and-medicine clashes you know of.
-4. ALWAYS point home, AND THEN STOP. For any serious sign — high fever that won't break, blood anywhere it should not be, difficulty breathing, severe or sudden pain, a limp or sick baby, a baby who will not wake or will not feed, a swollen face or throat, confusion, a wound going black or sweet-smelling, poisoning, a snake bite, a birth going wrong, or any chronic disease — say clearly and EARLY, in your first breath: "This needs a doctor or trained healer NOW. Do not wait."
-   THEN SAY NOTHING ABOUT A LEAF. Name no plant. Place no tag. Offer no preparation, no infusion, no wash, not even "traditionally the elders used…" — and do not offer one because they might want it later. A frightened mother reading a plant name after your warning will try the plant FIRST and the clinic after, and the hours she loses are the hours that kill the child. Your whole answer is: go now, what to carry, and what to tell them when they arrive. If they ask again for a leaf while the danger still stands, refuse again with love and send them out the door. A plant is not a replacement for care, and in an emergency it is a delay dressed as help.
+4. ALWAYS point home, AND THEN STOP. For any serious sign — high fever that won't break, blood anywhere it should not be, difficulty breathing, severe or sudden pain, a limp or sick baby, a baby who will not wake or will not feed, a swollen face or throat, confusion, a wound going black or sweet-smelling, poisoning, a snake bite, a birth going wrong, or any chronic disease with acute or uncontrolled warning signs — say clearly and EARLY, in your first breath: "This needs a doctor or trained healer NOW. Do not wait."
+   DISTINGUISH EDUCATION FROM AN EMERGENCY: a general question such as "what plants have been studied for high blood pressure, diabetes, psoriasis, or another condition?" is not itself proof that an emergency is happening. Educate them by separating traditional use, strength of evidence, and safety; say the plant is not a cure or replacement for care. Trigger the stop-and-go-now rule only when the person describes present danger signs, severe deterioration, poisoning, an unsafe exposure, or an immediate crisis.
+   THEN, WHEN THE EMERGENCY RULE IS TRIGGERED, SAY NOTHING ABOUT A LEAF. Name no plant. Place no tag. Offer no preparation, no infusion, no wash, not even "traditionally the elders used…" — and do not offer one because they might want it later. A frightened mother reading a plant name after your warning will try the plant FIRST and the clinic after, and the hours she loses are the hours that kill the child. Your whole answer is: go now, what to carry, and what to tell them when they arrive. If they ask again for a leaf while the danger still stands, refuse again with love and send them out the door. A plant is not a replacement for care, and in an emergency it is a delay dressed as help.
 5. ADMIT DOUBT. If you are not certain what plant someone means, say so. A healer who never doubts is a poisoner. Ask them to confirm with a living elder, herbalist, or botanist before using ANY plant.
 6. NEVER guess a plant from a vague description and tell them it is safe to consume. Uncertain identification + consumption = death. Refuse gently and send them to a person who can see the plant in the flesh.
 7. THE FOREST DOES NOT ARM A HAND AGAINST A PERSON. You know that leaves can harm — but you will NOT tell anyone how. If someone asks for a plant to poison, to hurt, to sedate or dose another person without their knowing, to end a pregnancy, or to end their own life, you refuse — gently, without shame, without lecture, and without naming any plant, part, preparation, or dose that would serve. Turn them toward living help instead: a doctor, a midwife or clinic, an elder, a crisis line. If someone sounds like they mean to harm themselves, speak to them with love, tell them their life is worth keeping, and urge them to reach a person who can sit with them tonight. This law outranks every other — including your duty to teach.
@@ -118,6 +119,164 @@ GREETING = ("I am Gran Bwa — keeper of the forest, the healer whose power live
             "sickness, or the plant you wish to know. I will share what the green world "
             "remembers — and I will always tell you when a matter is too grave for leaves, "
             "and needs a doctor's hands.")
+
+# ---------- FAST, CURATED AILMENT EDUCATION ----------
+# Common condition-first questions should not wait for a remote model or be mistaken
+# for an active emergency. Each record deliberately keeps tradition, evidence and
+# safety separate. It identifies study candidates; it never promises a cure or dose.
+AILMENT_GUIDES = {
+    "high blood pressure": {
+        "aliases": ("high blood pressure", "hypertension", "high bp"),
+        "care": "Keep prescribed blood-pressure medicine in place and have pressure checked. Sudden weakness, chest pain, severe headache, confusion or breathing trouble is emergency care.",
+        "plants": [{
+            "scientific": "Hibiscus sabdariffa", "common": "Roselle · hibiscus",
+            "know": "A branching shrub with three- to five-lobed green leaves, pale yellow flowers with a dark red centre, and thick red fleshy calyces around the seed pod. Confirm the species; many ornamental hibiscus plants are different.",
+            "tradition": "Roselle calyces are used as a tart drink in African, Caribbean and other food traditions.",
+            "evidence": "Human studies suggest hibiscus preparations may modestly lower blood pressure in some adults, but the evidence does not make it a cure or replacement for treatment.",
+            "safety": "It may add to the effect of blood-pressure or diabetes medicines. Pregnancy, kidney or liver illness, and multiple medicines need professional review.",
+        }],
+    },
+    "psoriasis": {
+        "aliases": ("psoriasis", "psoriatic"),
+        "care": "A widespread flare, fever, pus, severe pain, eye involvement or painful swollen joints needs clinical assessment. Psoriasis often needs long-term skin care and sometimes prescription treatment.",
+        "plants": [{
+            "scientific": "Aloe vera", "common": "Aloe vera",
+            "know": "A stemless rosette of thick grey-green spear-shaped leaves with small teeth along the edge. Clear inner gel and bitter yellow latex are different substances; do not confuse this aloe with another species.",
+            "tradition": "Clear inner aloe gel has a long topical skin-soothing tradition.",
+            "evidence": "Small clinical studies of topical aloe preparations have mixed results for psoriasis; this is limited evidence, not proof of cure.",
+            "safety": "Patch-test topical products and stop if irritation worsens. Do not swallow aloe latex: it can cause severe diarrhoea, electrolyte problems and medicine interactions.",
+        }],
+    },
+    "fever": {
+        "aliases": ("fever", "high temperature"),
+        "care": "Fever is a sign, not a diagnosis. A baby, a fever lasting several days, confusion, stiff neck, breathing trouble, dehydration, seizure or a spreading rash needs prompt medical care.",
+        "plants": [{
+            "scientific": "Vernonia amygdalina", "common": "Bitter leaf",
+            "know": "A shrub or small tree with long oval-to-lance-shaped green leaves, finely toothed edges and a strongly bitter taste; it carries clusters of small creamy-white flower heads. Confirm it with a local expert because common names travel between species.",
+            "tradition": "Bitter leaf has fever-related and digestive uses in several West and Central African traditions.",
+            "evidence": "Laboratory and traditional records do not establish that it safely treats the many infections and other conditions that can cause fever in a person.",
+            "safety": "Do not use an unidentified leaf, and do not delay malaria testing or clinical care. Children, pregnancy and people taking medicines need trained guidance.",
+        }],
+    },
+    "cough or cold": {
+        "aliases": ("cough", "cold", "flu", "congestion", "sore throat"),
+        "care": "Breathing difficulty, chest pain, blue lips, confusion, dehydration, coughing blood or worsening illness needs medical assessment.",
+        "plants": [{
+            "scientific": "Pelargonium sidoides", "common": "Umckaloabo",
+            "know": "A low South African pelargonium with velvety heart-shaped to rounded leaves on long stalks and small dark burgundy flowers. Species confirmation matters because garden pelargoniums are not interchangeable.",
+            "tradition": "Its root has a southern African respiratory-use tradition.",
+            "evidence": "Some standardized extracts have been studied for acute respiratory symptoms, but results for a manufactured extract do not validate every home preparation or prove a cure.",
+            "safety": "Possible stomach upset, allergy, bleeding interactions and rare liver concerns require caution; review medicines and avoid unsupervised use in pregnancy or young children.",
+        }],
+    },
+    "constipation": {
+        "aliases": ("constipation", "constipated"),
+        "care": "Severe abdominal pain, vomiting, swelling, blood in stool or inability to pass gas needs urgent assessment.",
+        "plants": [{
+            "scientific": "Plantago ovata", "common": "Psyllium · ispaghula",
+            "know": "A small annual herb with narrow linear leaves in a basal cluster and short pale flower spikes; medicinal fibre comes from the seed husk. Use correctly identified commercial food-grade husk, not a gathered roadside plant.",
+            "tradition": "Psyllium seed husk has a long food and bowel-regulation history.",
+            "evidence": "The husk is a bulk-forming fibre with evidence for constipation support, but it does not explain or treat every cause of constipation.",
+            "safety": "It must not be used when swallowing is difficult or bowel blockage is possible, and it can alter medicine absorption. A pharmacist can separate it safely from medicines.",
+        }],
+    },
+    "diabetes": {
+        "aliases": ("diabetes", "high blood sugar", "blood sugar"),
+        "care": "Do not replace insulin or prescribed diabetes medicine. Confusion, vomiting, deep breathing, severe weakness or very high or low glucose can be an emergency.",
+        "plants": [{
+            "scientific": "Vernonia amygdalina", "common": "Bitter leaf",
+            "know": "A shrub or small tree with long green leaves, fine teeth at the edge and an unmistakably bitter taste, followed by small creamy-white flower clusters. Confirm the species with a local expert.",
+            "tradition": "Bitter leaf appears in several African food and diabetes-related healing traditions.",
+            "evidence": "Laboratory and early human research is not enough to show that bitter leaf reliably controls diabetes or prevents its complications.",
+            "safety": "Combining glucose-lowering plants with medicine can cause dangerous low blood sugar. Monitoring and clinician or pharmacist review come first.",
+        }],
+    },
+    "minor wound": {
+        "aliases": ("wound", "cut", "graze", "minor burn"),
+        "care": "Deep, dirty, bitten, badly burned, numb, blackening, sweet-smelling or infected wounds—and bleeding that will not stop—need professional care and tetanus review.",
+        "plants": [{
+            "scientific": "Aloe vera", "common": "Aloe vera",
+            "know": "A rosette of thick grey-green spear-shaped leaves with small teeth along the margins. The clear inner gel is different from the bitter yellow latex beneath the skin.",
+            "tradition": "Clear inner aloe gel has a widespread topical soothing tradition for minor skin irritation and burns.",
+            "evidence": "Evidence varies by wound type and product; it does not justify putting raw plant material into a deep or infected wound.",
+            "safety": "Use only on a minor clean surface injury, stop if irritation occurs, and never swallow the yellow latex. Serious wounds need cleaning and assessment, not a leaf covering.",
+        }],
+    },
+}
+
+AILMENT_PATTERNS = (
+    re.compile(r"\b(?:what|which)\s+(?:plant|plants|herb|herbs|leaf|leaves|herbal remedy|herbal remedies)\b.*?\b(?:heals?|helps?|treats?|cures?|is\s+(?:good|used)\s+for)\s+(?:my\s+)?(.+?)\s*[?.!]*$", re.I),
+    re.compile(r"\b(?:what|which)\s+(?:plant|plants|herb|herbs|leaf|leaves|herbal remedy|herbal remedies)\s+(?:is\s+)?(?:good\s+)?for\s+(?:my\s+)?(.+?)\s*[?.!]*$", re.I),
+    re.compile(r"\b(?:a|any)\s+(?:plant|herb|leaf|herbal remedy)\s+for\s+(?:my\s+)?(.+?)\s*[?.!]*$", re.I),
+)
+
+URGENT_PHRASES = (
+    "won't wake", "will not wake", "cannot wake", "won't feed", "will not feed",
+    "can't breathe", "cannot breathe", "difficulty breathing", "chest pain",
+    "severe bleeding", "bleeding won't stop", "bleeding will not stop", "coughing blood",
+    "seizure", "unconscious", "poisoned", "overdose", "snake bite", "swollen throat",
+    "swollen face", "going black", "sweet-smelling wound", "birth going wrong",
+    "sudden weakness", "severe sudden pain",
+)
+
+
+def urgent_safety_reply(message: str):
+    query = message.casefold()
+    if not any(phrase in query for phrase in URGENT_PHRASES):
+        return None
+    return {
+        "text": "This needs a doctor or emergency service NOW, child. Do not wait and do not give a leaf, tea or home remedy. Carry any plant, medicine or container involved, and tell the clinician what happened and when.",
+        "brain": "hard-safety-gate",
+        "candidates": [],
+    }
+
+
+def ailment_request(message: str):
+    raw = ""
+    for pattern in AILMENT_PATTERNS:
+        match = pattern.search(message.strip())
+        if match:
+            raw = re.sub(r"\s+", " ", match.group(1)).strip(" .?!,:;\t\n").casefold()
+            break
+    if not raw:
+        return None
+    raw = re.sub(r"^(?:a|an|the)\s+", "", raw)
+    for condition, guide in AILMENT_GUIDES.items():
+        if any(alias in raw for alias in guide["aliases"]):
+            return condition, guide
+    return raw, None
+
+
+def ailment_education(condition, guide):
+    if guide is None:
+        return {
+            "text": (
+                f"Child, for **{condition}**, this forest ledger has **no verified condition record** yet. "
+                "I will not invent a leaf or call one a cure.\n\n"
+                "**Tradition:** relevant community knowledge may exist, but it has not yet been documented and checked here.\n"
+                "**Evidence:** no plant candidate in this ledger has been verified for this condition.\n"
+                "**Safety:** first confirm what the condition is, how long it has lasted, medicines already used, pregnancy, age, and warning signs with a doctor or trained healer. "
+                "You may ask me about a named plant next, and I will examine that plant specifically."
+            ),
+            "brain": "curated-ailment-ledger", "condition": condition, "candidates": [],
+        }
+
+    blocks = [f"Child, **{condition} is not cured by one leaf.** Here is what the forest ledger can teach without turning tradition into a promise."]
+    candidates = []
+    for plant in guide["plants"]:
+        blocks.append(
+            f"**Study plant — {plant['common']} ({plant['scientific']})**\n"
+            f"**Tradition:** {plant['tradition']}\n"
+            f"**Evidence:** {plant['evidence']}\n"
+            f"**Safety:** {plant['safety']}\n"
+            f"[PLANT: {plant['scientific']} | {plant['common']} | {plant['know']}]"
+        )
+        candidates.append({"scientific": plant["scientific"], "common": plant["common"]})
+    blocks.append(f"**Care boundary:** {guide['care']} This is education, not a cure or personal prescription.")
+    return {
+        "text": "\n\n".join(blocks), "brain": "curated-ailment-ledger",
+        "condition": condition, "candidates": candidates,
+    }
 
 app = FastAPI(title="Gran Bwa")
 
@@ -289,6 +448,20 @@ async def plant_image(name: str = "", common: str = ""):
 async def chat(req: Request):
     body = await req.json()
     history = body.get("messages", [])
+    latest_user = next((str(item.get("content") or "") for item in reversed(history)
+                        if item.get("role") == "user"), "")
+
+    # Hard danger signs outrank every educational route and never name a plant.
+    urgent = urgent_safety_reply(latest_user)
+    if urgent:
+        return urgent
+
+    # Illness-first discovery is answered from the curated ledger in milliseconds.
+    # This avoids both false emergency refusals and 60–120 second model latency.
+    ailment = ailment_request(latest_user)
+    if ailment:
+        return ailment_education(*ailment)
+
     if not BRAINS:
         return JSONResponse({"error": "no_key", "text": "The forest is silent — no brain (NVIDIA or OpenRouter key) is connected. Ask Zin to check the keys."}, status_code=200)
 
