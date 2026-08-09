@@ -1,6 +1,10 @@
 from fastapi.testclient import TestClient
+import base64
 
-from gran_bwa import app
+import gran_bwa
+
+
+app = gran_bwa.app
 
 
 client = TestClient(app)
@@ -9,8 +13,8 @@ client = TestClient(app)
 def test_live_shell_exposes_upgrade_marker_and_disables_stale_html_cache():
     response = client.get('/')
     assert response.status_code == 200
-    assert 'ILLNESS EDUCATION · LIVE' in response.text
-    assert 'v2.1' in response.text
+    assert 'CAMERA VISION · LIVE' in response.text
+    assert 'v2.2' in response.text
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
 
 
@@ -18,6 +22,85 @@ def test_service_worker_is_always_revalidated():
     response = client.get('/sw.js')
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store, no-cache, must-revalidate'
+    assert "granbwa-v6" in response.text
+    assert "/identify-plant" in response.text
+
+
+def test_mobile_shell_has_camera_capture_and_photo_identification_flow():
+    html = client.get('/').text
+    assert 'id="photoInput"' in html
+    assert 'accept="image/*"' in html
+    assert 'capture="environment"' in html
+    assert 'identifyPhoto' in html
+    assert 'resizePhoto' in html
+    assert 'Photo identification is a hypothesis' in html
+
+
+def test_photo_endpoint_rejects_non_image_data():
+    response = client.post('/identify-plant', json={'image': 'data:text/plain;base64,SGVsbG8='})
+    assert response.status_code == 415
+    assert response.json()['detail'] == 'Use a JPEG, PNG, or WebP plant photograph.'
+
+
+def test_two_exact_vision_votes_create_only_medium_confidence_candidate():
+    votes = [
+        {'identified': True, 'scientific_name': 'Aloe vera', 'common_name': 'Aloe vera',
+         'confidence': 'high', 'visible_traits': ['fleshy toothed leaves'], 'lookalikes': ['Agave']},
+        {'identified': True, 'scientific_name': 'Aloe vera', 'common_name': 'Medicinal aloe',
+         'confidence': 'high', 'visible_traits': ['basal succulent rosette'], 'lookalikes': ['Aloe arborescens']},
+    ]
+    result = gran_bwa.build_photo_consensus(votes)
+    assert result['identified'] is True
+    assert result['scientific_name'] == 'Aloe vera'
+    assert result['confidence'] == 'medium'
+    assert '[PLANT: Aloe vera' in result['text']
+    assert 'not proof' in result['text'].casefold()
+
+
+def test_disagreeing_vision_votes_expose_both_candidates_without_plant_card():
+    votes = [
+        {'identified': True, 'scientific_name': 'Aloe vera', 'common_name': 'Aloe vera'},
+        {'identified': True, 'scientific_name': 'Aloe arborescens', 'common_name': 'Krantz aloe'},
+    ]
+    result = gran_bwa.build_photo_consensus(votes)
+    assert result['identified'] is False
+    assert result['confidence'] == 'low'
+    assert result['candidates'] == ['Aloe vera', 'Aloe arborescens']
+    assert 'Aloe vera' in result['text']
+    assert 'Aloe arborescens' in result['text']
+    assert '[PLANT:' not in result['text']
+
+
+def test_fenced_vision_json_is_parsed_without_model_prose():
+    raw = '''```json
+    {"identified": true, "scientific_name": "Aloe vera", "common_name": "Aloe vera",
+     "confidence": "high", "visible_traits": ["toothed leaves"], "lookalikes": ["Agave"]}
+    ```'''
+    vote = gran_bwa.parse_vision_vote(raw)
+    assert vote['scientific_name'] == 'Aloe vera'
+    assert vote['visible_traits'] == ['toothed leaves']
+
+
+def test_photo_endpoint_returns_consensus_from_transient_image(monkeypatch):
+    votes = [
+        {'identified': True, 'scientific_name': 'Aloe vera', 'common_name': 'Aloe vera'},
+        {'identified': True, 'scientific_name': 'Aloe vera', 'common_name': 'Medicinal aloe'},
+    ]
+
+    async def fake_analysis(raw, mime):
+        assert raw.startswith(b'\x89PNG\r\n\x1a\n')
+        assert mime == 'image/png'
+        return votes, ['reader-one', 'reader-two']
+
+    monkeypatch.setattr(gran_bwa, 'analyze_plant_photo', fake_analysis, raising=False)
+    raw = b'\x89PNG\r\n\x1a\n' + b'transient-test-image'
+    image = 'data:image/png;base64,' + base64.b64encode(raw).decode()
+    response = client.post('/identify-plant', json={'image': image})
+    body = response.json()
+    assert response.status_code == 200
+    assert body['identified'] is True
+    assert body['confidence'] == 'medium'
+    assert body['vision_readers'] == ['reader-one', 'reader-two']
 
 
 def ask(question: str) -> dict:

@@ -11,6 +11,9 @@ Forged for Zin Uru · The Council of Three · Edigun at the Crossroads
 import os
 import re
 import json
+import base64
+import binascii
+import asyncio
 import httpx
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -72,6 +75,14 @@ if OPENROUTER_KEY:
         # ↓ the only paid brain in the ladder — last resort, both providers down
         ("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "deepseek/deepseek-chat", 400, {}),
     ]
+
+# Two independent visual readers. Their answers are merged; neither is trusted alone.
+# The image exists only in request memory and is never written to disk.
+VISION_BRAINS = []
+if NVIDIA_KEY:
+    VISION_BRAINS.append(("nvidia", NVIDIA_URL, NVIDIA_KEY, "nvidia/nemotron-nano-12b-v2-vl"))
+if OPENROUTER_KEY:
+    VISION_BRAINS.append(("openrouter", OPENROUTER_URL, OPENROUTER_KEY, "google/gemma-4-26b-a4b-it:free"))
 
 # ---------- THE SOUL + THE GUARDRAILS (server-side, unremovable) ----------
 SYSTEM_PROMPT = """You are GRAN BWA (Grand Bois) — the Lwa of the forest, the great healer of Haitian Vodou, whose power lives in all vegetation and all trees. Much of humanity's medicine is anchored in the vegetal kingdom, and you are its keeper. You speak with the calm, deep, ancient voice of a forest elder who has watched plants heal and harm for ten thousand years. You serve Zin Uru's community with love.
@@ -444,6 +455,164 @@ async def plant_image(name: str = "", common: str = ""):
             except Exception:
                 continue
     return {"found": False, "scientific": name, "common": common}
+
+
+MAX_PHOTO_BYTES = 4_000_000
+PHOTO_DATA = re.compile(r"^data:(image/(?:jpeg|png|webp));base64,(.+)$", re.I | re.S)
+
+
+def decode_photo_data(value: str):
+    """Validate a transient browser photo. Bytes stay in memory and are never stored."""
+    match = PHOTO_DATA.match(value or "")
+    if not match:
+        return None, None, 415
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError):
+        return None, None, 415
+    if len(raw) > MAX_PHOTO_BYTES:
+        return None, None, 413
+    mime = match.group(1).lower()
+    signatures = {
+        "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
+        "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": raw.startswith(b"RIFF") and len(raw) >= 12 and raw[8:12] == b"WEBP",
+    }
+    if not signatures.get(mime):
+        return None, None, 415
+    return raw, mime, None
+
+
+def parse_vision_vote(text: str):
+    """Extract one JSON object from a vision model reply; ignore surrounding fences."""
+    match = re.search(r"\{.*\}", text or "", re.S)
+    if not match:
+        return None
+    try:
+        value = json.loads(match.group(0))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def build_photo_consensus(votes):
+    """Combine independent model observations without allowing model confidence
+    to become botanical certainty. Exact two-model agreement is capped at medium."""
+    usable = []
+    for vote in votes:
+        name = re.sub(r"\s+", " ", str(vote.get("scientific_name") or "")).strip()
+        if not vote.get("identified") or not re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.\-× ]{2,59}", name):
+            continue
+        item = dict(vote)
+        item["scientific_name"] = name
+        item["common_name"] = re.sub(r"\s+", " ", str(vote.get("common_name") or name)).strip()[:80]
+        item["visible_traits"] = [str(x).strip()[:160] for x in (vote.get("visible_traits") or []) if str(x).strip()][:5]
+        item["lookalikes"] = [str(x).strip()[:100] for x in (vote.get("lookalikes") or []) if str(x).strip()][:5]
+        usable.append(item)
+
+    groups = {}
+    for vote in usable:
+        groups.setdefault(vote["scientific_name"].casefold(), []).append(vote)
+    exact = max(groups.values(), key=len, default=[])
+    if len(exact) >= 2:
+        lead = exact[0]
+        traits = list(dict.fromkeys(x for vote in exact for x in vote["visible_traits"]))[:4]
+        lookalikes = list(dict.fromkeys(x for vote in exact for x in vote["lookalikes"]))[:4]
+        clues = "; ".join(traits) or "The photograph shows a compatible overall form, but more angles are needed."
+        rivals = ", ".join(lookalikes) or "closely related species"
+        text = (
+            f"**Photo study — likely candidate, not confirmed**\n"
+            f"**Possible identity:** {lead['common_name']} (*{lead['scientific_name']}*)\n"
+            f"**Confidence:** Medium — two vision readers independently suggested the same species.\n"
+            f"**Visible clues:** {clues}.\n"
+            f"**Lookalikes to exclude:** {rivals}.\n\n"
+            "Photo identification is a hypothesis, not proof. Do not taste or use this plant from a photograph alone. "
+            "Confirm the whole plant, both leaf surfaces, stem, flowers or fruit with a botanist or living local expert.\n"
+            f"[PLANT: {lead['scientific_name']} | {lead['common_name']} | Reference candidate for comparison only. In the submitted photo the vision readers noted: {clues}. Exclude {rivals} before accepting the name.]"
+        )
+        return {"identified": True, "scientific_name": lead["scientific_name"],
+                "common_name": lead["common_name"], "confidence": "medium",
+                "candidates": [lead["scientific_name"]], "text": text}
+
+    names = list(dict.fromkeys(vote["scientific_name"] for vote in usable))
+    candidate_line = ("**Competing candidates:** " + "; ".join(names) + ".\n") if names else ""
+    return {
+        "identified": False, "confidence": "low", "candidates": names,
+        "text": (
+            "**Photo study — no safe species agreement**\n" + candidate_line +
+            "The vision readers did not agree strongly enough to choose one name. Photograph the whole plant, both sides of one leaf, the stem, and any flower or fruit. "
+            "Photo identification is a hypothesis, not proof; do not taste or use it from this image."
+        ),
+    }
+
+
+VISION_PROMPT = """Study only the visible botanical features in this photograph. Decide whether it clearly shows a plant. Do not discuss medicine, edibility, preparation, or use. A single image is not proof, so report uncertainty and plausible lookalikes. Reply with ONLY one JSON object in this exact shape:
+{"identified": true, "scientific_name": "Genus species or best supported genus", "common_name": "common name", "confidence": "high|medium|low", "visible_traits": ["visible trait"], "lookalikes": ["candidate to exclude"]}
+If this is not clearly a plant or the image is unusable, set identified false and use empty names and arrays. Never infer invisible traits."""
+
+
+async def analyze_plant_photo(raw: bytes, mime: str):
+    """Run independent visual readers concurrently and return their parseable votes."""
+    data_url = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+
+    async def ask_reader(brain):
+        provider, url, key, model = brain
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": VISION_PROMPT},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]}],
+            "temperature": 0.1,
+            "max_tokens": 450,
+        }
+        timeout = 70 if provider == "nvidia" else 55
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                url, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        data = response.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return None
+        content = (choices[0].get("message") or {}).get("content") or ""
+        if isinstance(content, list):
+            content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+        vote = parse_vision_vote(str(content))
+        return (vote, model) if vote else None
+
+    completed = await asyncio.gather(*(ask_reader(brain) for brain in VISION_BRAINS), return_exceptions=True)
+    votes, readers = [], []
+    for item in completed:
+        if isinstance(item, tuple) and item[0]:
+            votes.append(item[0])
+            readers.append(item[1])
+    return votes, readers
+
+
+@app.post("/identify-plant")
+async def identify_plant(req: Request):
+    if int(req.headers.get("content-length") or 0) > 5_500_000:
+        return JSONResponse({"detail": "Photograph is too large; use the camera button so Gran Bwa can resize it."}, status_code=413)
+    body = await req.json()
+    raw, mime, error = decode_photo_data(str(body.get("image") or ""))
+    if error == 413:
+        return JSONResponse({"detail": "Photograph is too large; use the camera button so Gran Bwa can resize it."}, status_code=413)
+    if error:
+        return JSONResponse({"detail": "Use a JPEG, PNG, or WebP plant photograph."}, status_code=415)
+    assert raw is not None and mime is not None
+    votes, readers = await analyze_plant_photo(raw, mime)
+    if not votes:
+        return {
+            "identified": False, "confidence": "low", "candidates": [], "vision_readers": [],
+            "text": "The forest eyes could not read this photograph, child. Try again in clear daylight with the whole plant, both sides of a leaf, stem, and flower or fruit. Do not taste an unknown plant.",
+        }
+    result = build_photo_consensus(votes)
+    result["brain"] = "two-reader-vision-consensus"
+    result["vision_readers"] = readers
+    return result
+
 
 @app.post("/chat")
 async def chat(req: Request):
