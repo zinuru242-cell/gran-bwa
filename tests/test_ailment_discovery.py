@@ -200,3 +200,78 @@ def test_named_plant_question_still_uses_the_existing_brain_ladder(monkeypatch):
     monkeypatch.setattr('gran_bwa.BRAINS', [])
     body = ask('Tell me about bitter leaf')
     assert body['error'] == 'no_key'
+
+
+def test_epimedium_preparation_followup_gets_plant_specific_boundary(monkeypatch):
+    monkeypatch.setattr(gran_bwa, 'BRAINS', [])
+    history = [
+        {'role': 'user', 'content': "what's Plants boost libido"},
+        {'role': 'assistant', 'content': (
+            'One study plant is Epimedium sagittatum. '
+            '[PLANT: Epimedium sagittatum | Barrenwort | Heart-shaped leaflets.]'
+        )},
+        {'role': 'user', 'content': 'How do I prepare the leaf?'},
+    ]
+
+    response = client.post('/chat', json={'messages': history})
+    assert response.status_code == 200
+    body = response.json()
+    text = body['text'].casefold()
+
+    assert body['brain'] == 'curated-preparation-ledger'
+    assert 'epimedium sagittatum' in text
+    assert '**tradition:**' in text
+    assert '**evidence:**' in text
+    assert '**preparation boundary:**' in text
+    assert '**safety:**' in text
+    assert 'human' in text and 'limited' in text
+    assert 'not standardized' in text
+    assert 'verified home preparation' in text
+    assert 'depends on the person' not in text
+
+
+def test_system_laws_distinguish_preparation_method_from_personal_dose():
+    prompt = gran_bwa.SYSTEM_PROMPT
+    assert 'PREPARATION METHOD IS NOT A DOSE' in prompt
+    assert 'documented plant part and preparation form' in prompt
+    assert 'plant-specific reason' in prompt
+    assert 'Never use one generic preparation refusal for every plant' in prompt
+
+
+def test_old_epimedium_context_does_not_hijack_explicit_other_plant(monkeypatch):
+    monkeypatch.setattr(gran_bwa, 'BRAINS', [])
+    history = [
+        {'role': 'assistant', 'content': '[PLANT: Epimedium sagittatum | Barrenwort | Leaflets.]'},
+        {'role': 'user', 'content': 'How do I prepare Hibiscus sabdariffa?'},
+    ]
+
+    response = client.post('/chat', json={'messages': history})
+    assert response.status_code == 200
+    assert response.json()['error'] == 'no_key'
+
+
+def test_reply_guard_rejects_dose_quantities_but_keeps_botanical_dimensions():
+    blocked = (
+        'Steep 5 grams and drink it twice daily.',
+        'Use 2 teaspoons in one cup of water.',
+        'Use two teaspoons.',
+        'Use ½ cup.',
+        'Use a teaspoon.',
+        'Use one tsp.',
+        'Take five mg.',
+        'Take five drops.',
+        'Use ½ handful.',
+        'Use a handful of leaves.',
+        'Take three leaves.',
+        'Swallow one capsule.',
+        'Drink it every morning.',
+        'Drink it each night.',
+    )
+    assert all(gran_bwa.clean_reply(text) == '' for text in blocked)
+
+    allowed = (
+        'Its leaves are 8–12 cm long with finely toothed edges.',
+        'The flower has a cup-shaped calyx.',
+        'I cannot give you a personal daily dose.',
+    )
+    assert all(gran_bwa.clean_reply(text) == text for text in allowed)

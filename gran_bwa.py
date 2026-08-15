@@ -104,8 +104,10 @@ HOW YOU SPEAK:
 - You honor traditional and ancestral knowledge AND you respect modern medicine — they are two hands of the same healing.
 
 SACRED SAFETY LAWS — you MUST obey these in EVERY answer about a plant or ailment:
-1. IDENTIFY AND INFORM, NEVER PRESCRIBE. Name the plant, its traditional use, how it was prepared by the ancestors. Never say "take this to cure X" as a command or a promise of cure.
-2. NEVER GIVE A DOSE. No grams, no millilitres, no "three leaves twice a day," no strength of a brew, no how-many-days. The ancestors measured by the hand of a trained healer who could see the person. If someone presses you for an amount, tell them plainly that the measure belongs to a living herbalist who can see them, not to a voice on a phone.
+1. IDENTIFY AND INFORM, NEVER PRESCRIBE. Name the plant, its traditional use, and—only when reliably documented—how it has been prepared. Never say "take this to cure X" as a command or a promise of cure. If preparation history is uncertain, say that plainly instead of inventing ancestral practice.
+   PREPARATION METHOD IS NOT A DOSE. When identity is sufficiently established and the plant is not too dangerous for home handling, explain the documented plant part and preparation form: for example whether records describe food use, an infusion, decoction, dried material, expressed juice, or external application, and the method-level steps that distinguish those forms. Do not attach a personal amount, concentration, frequency, or duration.
+   If home preparation is unsafe, not standardized, supported only for a manufactured extract, or too weakly documented, withhold the recipe and give the plant-specific reason. Separate **Tradition**, **Evidence**, **Preparation boundary**, and **Safety** so the person still learns something useful. Never use one generic preparation refusal for every plant, and never claim that all ancestors avoided measures.
+2. NEVER GIVE A PERSONAL DOSE. No grams, no millilitres, no "three leaves twice a day," no brew concentration, and no how-many-days. If someone presses for an amount, explain why that amount depends on verified identity, preparation, health, medicines, age and pregnancy, and belongs with a qualified living practitioner—not a voice on a phone. This amount boundary must not erase safe, documented method-level education permitted by Law 1.
 3. ALWAYS name the danger. Mention toxic lookalike plants, and who must NOT use it (pregnant or nursing women, small children, elders, people on medication, people with liver or kidney trouble) when relevant. Name the plant-and-medicine clashes you know of.
 4. ALWAYS point home, AND THEN STOP. For any serious sign — high fever that won't break, blood anywhere it should not be, difficulty breathing, severe or sudden pain, a limp or sick baby, a baby who will not wake or will not feed, a swollen face or throat, confusion, a wound going black or sweet-smelling, poisoning, a snake bite, a birth going wrong, or any chronic disease with acute or uncontrolled warning signs — say clearly and EARLY, in your first breath: "This needs a doctor or trained healer NOW. Do not wait."
    DISTINGUISH EDUCATION FROM AN EMERGENCY: a general question such as "what plants have been studied for high blood pressure, diabetes, psoriasis, or another condition?" is not itself proof that an emergency is happening. Educate them by separating traditional use, strength of evidence, and safety; say the plant is not a cure or replacement for care. Trigger the stop-and-go-now rule only when the person describes present danger signs, severe deterioration, poisoning, an unsafe exposure, or an immediate crisis.
@@ -296,6 +298,79 @@ def ailment_education(condition, guide):
         "text": "\n\n".join(blocks), "brain": "curated-ailment-ledger",
         "condition": condition, "candidates": candidates,
     }
+
+
+PREPARATION_GUIDES = {
+    "Epimedium sagittatum": {
+        "aliases": ("epimedium sagittatum", "epimedium", "barrenwort", "horny goat weed"),
+        "tradition": (
+            "Dried Epimedium aerial parts appear in Chinese herbal traditions, commonly as "
+            "processed materia medica or within formulas rather than as a casually gathered fresh leaf."
+        ),
+        "evidence": (
+            "Human evidence for improving libido is limited, and research on extracts or "
+            "multi-ingredient products does not validate a raw-leaf preparation."
+        ),
+        "boundary": (
+            "Species, processing and active-compound strength are not standardized in a gathered leaf. "
+            "There is no verified home preparation I can safely turn into a recipe, so I will not invent "
+            "a brewing method or personal dose."
+        ),
+        "safety": (
+            "Do not use a leaf identified only from an app picture. Have the species and any medicines "
+            "reviewed by a qualified herbal practitioner, pharmacist or clinician before considering it."
+        ),
+    },
+}
+
+PREPARATION_INTENT = re.compile(
+    r"\b(?:how\s+(?:do|should|can)\s+i\s+(?:prepare|brew|make|use)|"
+    r"prepare|preparation|brew|steep|decoction|infusion|make\s+(?:a\s+)?tea)\b",
+    re.I,
+)
+
+
+PREPARATION_REFERENCE = re.compile(
+    r"\b(?:it|this\s+(?:plant|leaf)|that\s+(?:plant|leaf)|the\s+(?:plant|leaf)|"
+    r"leaf\s+you\s+named|plant\s+you\s+named)\b",
+    re.I,
+)
+
+
+def preparation_request(message, history):
+    message = str(message or "")
+    if not PREPARATION_INTENT.search(message):
+        return None
+    latest = message.casefold()
+    for scientific, guide in PREPARATION_GUIDES.items():
+        if any(alias in latest for alias in guide["aliases"]):
+            return scientific, guide
+    if not PREPARATION_REFERENCE.search(message):
+        return None
+    context = "\n".join(
+        item["content"] for item in history
+        if item.get("role") == "assistant" and isinstance(item.get("content"), str)
+    ).casefold()
+    for scientific, guide in PREPARATION_GUIDES.items():
+        if any(alias in context for alias in guide["aliases"]):
+            return scientific, guide
+    return None
+
+
+def preparation_education(scientific, guide):
+    return {
+        "text": (
+            f"Child, the plant under discussion is **{scientific}**. This boundary belongs to this "
+            "plant and this evidence—not to every leaf.\n\n"
+            f"**Tradition:** {guide['tradition']}\n"
+            f"**Evidence:** {guide['evidence']}\n"
+            f"**Preparation boundary:** {guide['boundary']}\n"
+            f"**Safety:** {guide['safety']}"
+        ),
+        "brain": "curated-preparation-ledger",
+        "plant": scientific,
+    }
+
 
 def normalize_land(value):
     """Return coarse geography bound to a canonical ISO country identity."""
@@ -935,16 +1010,36 @@ REASONING_LEAK = re.compile(
     r"i\s+(need|should|must)\s+to\b|we'?re\s+asked\b|the\s+question\s+is\b)", re.I)
 
 
+DOSE_AMOUNT = (
+    r"(?:\d+(?:[.,]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|"
+    r"a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter)"
+)
+DOSE_UNIT = (
+    r"(?:mg|g|grams?|milligrams?|ml|millilit(?:re|er)s?|teaspoons?|tablespoons?|"
+    r"tsp|tbsp|cups?|drops?|handfuls?|pinches?|spoonfuls?|capsules?|tablets?)"
+)
+DOSE_ACTION = r"(?:take|drink|swallow|consume|apply|use|steep|brew)"
+DOSE_QUANTITY_LEAK = re.compile(
+    rf"(?:"
+    rf"(?<!\w){DOSE_AMOUNT}\s*{DOSE_UNIT}(?![-\w])|"
+    rf"(?:^|[.!?]\s+|\n[-•]?\s*){DOSE_ACTION}\b[^\n.!?]{{0,40}}"
+    rf"(?<!\w){DOSE_AMOUNT}\s+leaves?\b|"
+    rf"(?:^|[.!?]\s+|\n[-•]?\s*){DOSE_ACTION}\b[^\n.!?]{{0,60}}\b"
+    rf"(?:once|twice|three\s+times|daily|(?:every|each)\s+(?:morning|night|day))\b"
+    rf")",
+    re.I,
+)
+
+
 def clean_reply(text: str) -> str:
-    """Strip reasoning scaffolding so the community never sees the machine
-    behind Gran Bwa's voice. Returns "" when the whole reply is scratchpad —
-    the caller then falls through to the next brain rather than showing it."""
+    """Strip reasoning scaffolding and reject dose-bearing model output so the
+    community never sees machine scratchpad or a personal medicinal quantity."""
     if not text:
         return ""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I)
     text = re.sub(r"</?think>", "", text, flags=re.I)
     text = text.strip()
-    if REASONING_LEAK.match(text):
+    if REASONING_LEAK.match(text) or DOSE_QUANTITY_LEAK.search(text):
         return ""
     return text
 
@@ -1478,6 +1573,10 @@ async def chat(req: Request):
     urgent = urgent_safety_reply(latest_user)
     if urgent:
         return urgent
+
+    preparation = preparation_request(latest_user, history)
+    if preparation:
+        return preparation_education(*preparation)
 
     # Illness-first discovery is answered from the curated ledger in milliseconds.
     # This avoids both false emergency refusals and 60–120 second model latency.
